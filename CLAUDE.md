@@ -2,19 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 아키텍처
+## 시스템 구성
 
-이 서버는 PLC 데이터 파이프라인의 맨 끝단(소비·가공·전달)만 담당한다. PLC나 OPC UA 서버와 직접 통신하지 않는다.
+이 서버는 크레인 데이터 파이프라인의 맨 끝단(소비·가공·저장·전달)만 담당한다. Node-RED나 MQTT와 직접 통신하지 않는다.
 
 ```
-① 데이터 소스            ② IntersysLink v4                      ③ Kafka        ④ 이 서버                         ⑤ 브라우저
-Siemens PLC ─S7──────▶ S7 Agent ─────┐
-                                      ├▶ Engine ▶ Kafka Provider ─▶ Topic ─▶ Kafka Consumer ▶ Service ▶ WebSocket(STOMP) / REST ─▶ 웹 모니터링 화면
-Kepware     ─OPC UA──▶ OPC UA Agent ─┘
+① 데이터 소스     ② IntersysLink v4                       ③ Kafka  ④ 이 서버                                             ⑤ 브라우저
+Node-RED ─MQTT──▶ MQTT Agent ▶ Engine ▶ Kafka Provider ─▶ Topic ─▶ Kafka Consumer ▶ Service ▶ WebSocket(STOMP) / REST ─▶ 웹 모니터링 화면
+                                                                                       │
+                                                                                       ▼
+                                                                               ⑥ PostgreSQL
 ```
 
-- ①~③은 외부 시스템이다. 수집과 Kafka produce는 IntersysLink v4가 하고, 이 서버는 토픽을 subscribe만 한다.
+- ①~③은 외부 시스템이다. 크레인 값은 Node-RED 크레인 시뮬레이터가 만들어 MQTT로 발행하고, 수집과 Kafka produce는 IntersysLink v4의 MQTT Agent가 하며, 이 서버는 토픽을 subscribe만 한다.
 - 서버 내부 흐름은 `Kafka Consumer → Service(데이터 가공/처리) → WebSocket(STOMP) 푸시 + REST 조회`다.
+- Service는 Kafka로 받은 데이터를 실시간 푸시와 별개로 ⑥ PostgreSQL에 저장한다. 리플레이 등 저장 데이터가 필요한 기능은 이 DB를 읽는다.
+
 ## 명령어
 
 Windows 환경이다. PowerShell에서는 `.\gradlew.bat`, Git Bash에서는 `./gradlew`를 쓴다.
