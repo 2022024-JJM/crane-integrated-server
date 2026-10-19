@@ -21,7 +21,7 @@ flowchart LR
         API["WebSocket / REST API"]
     end
     WEB["⑤ 웹 모니터링 화면<br/>(Browser)"]
-    DB[("⑥ PostgreSQL")]
+    DB[("⑥ PostgreSQL<br/>(TimescaleDB)")]
 
     NR -- MQTT Publish --> MA
     MA --> ENG
@@ -41,10 +41,10 @@ flowchart LR
 | 구분 | 사용 기술 |
 |---|---|
 | 언어 | Java 25 |
-| 프레임워크 | Spring Boot 4.1.1 (Web MVC, WebSocket, Kafka, Validation, Actuator) |
+| 프레임워크 | Spring Boot 4.1.1 (Web MVC, WebSocket, Kafka, Data JPA, Flyway, Validation, Actuator) |
 | 빌드 | Gradle 9.7.1 (wrapper) |
 | 메시징 | Apache Kafka |
-| 데이터베이스 | PostgreSQL |
+| 데이터베이스 | PostgreSQL + TimescaleDB (스키마는 Flyway로 관리, 테스트는 H2) |
 
 ## 시작하기
 
@@ -57,6 +57,8 @@ JDK 25가 설치되어 있어야 합니다.
 ```
 
 Git Bash, macOS, Linux에서는 `.\gradlew.bat` 대신 `./gradlew`를 사용합니다.
+
+서버는 기동 시 `localhost:5432`의 `cis` 데이터베이스(계정 `cis` / `cis`)에 접속합니다. 다른 DB를 쓰려면 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경 변수로 바꿉니다. 테스트는 H2를 쓰므로 DB 없이 실행됩니다.
 
 서버는 `8080` 포트로 뜨고, 상태는 아래 주소로 확인합니다.
 
