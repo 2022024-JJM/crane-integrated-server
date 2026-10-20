@@ -1,0 +1,48 @@
+package com.hanwha.cis.adapter.in.kafka;
+
+import com.hanwha.cis.application.port.in.IngestTagReadingUseCase;
+import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * 토픽을 구독해 JSON을 {@link KafkaRawEvent}로 읽고 유스케이스에 넘긴다. 파티션(=크레인)당 스레드 1개.
+ * 이 스레드는 메모리 상태만 만지고 DB·Redis는 호출하지 않는다. 예외는 삼키지 않고 컨테이너 에러 핸들러에 맡긴다.
+ */
+@Component
+public class CraneEventKafkaListener {
+
+    private final IngestTagReadingUseCase ingest;
+    private final JsonMapper json;
+
+    public CraneEventKafkaListener(IngestTagReadingUseCase ingest, JsonMapper json) {
+        this.ingest = ingest;
+        this.json = json;
+    }
+
+    @KafkaListener(topics = "${cis.kafka.topic}", concurrency = "${cis.kafka.concurrency}")
+    public void onMessage(ConsumerRecord<String, String> record) {
+        String payload = record.value();
+        if (payload == null) {
+            ingest.skipUnparseable(record.key(), null);
+            return;
+        }
+        KafkaRawEvent event;
+        try {
+            event = json.readValue(payload, KafkaRawEvent.class);
+        } catch (JacksonException e) {
+            ingest.skipUnparseable(record.key(), payload);
+            return;
+        }
+        if (event == null || event.payload() == null) {
+            ingest.skipUnparseable(record.key(), payload);
+            return;
+        }
+        KafkaRawEvent.Payload p = event.payload();
+        ingest.ingest(new RawTagEvent(record.key(), event.stationId(), event.craneId(), event.occurredAt(),
+                p.tagKey(), p.value(), p.quality()));
+    }
+}

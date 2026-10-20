@@ -2,7 +2,7 @@ spring:
   application:
     name: crane-integrated-server
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/cis}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/cis?reWriteBatchedInserts=true}
     username: ${DB_USERNAME:cis}
     password: ${DB_PASSWORD:cis}
   jpa:
@@ -11,3 +11,52 @@ spring:
       ddl-auto: validate
   flyway:
     locations: classpath:db/migration/common,classpath:db/migration/{vendor}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      group-id: crane-integrated-server
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: false
+  mvc:
+    problemdetails:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+
+cis:
+  kafka:
+    topic: ocean.crane.indoor.event
+    concurrency: 3
+  push:
+    interval: 250ms
+  history:
+    interval: 1s
+    queue-capacity: 10000
+    batch-size: 500
+    flush-interval: 1s
+    max-retries: 3
+  state:
+    stale-threshold: 30s
+  query:
+    max-range: 1h
+    default-step: 1s
+    max-points: 5000
+    default-change-limit: 500
+    max-change-limit: 5000
+  redis:
+    state-key: "cis:crane:state"
+    snapshot-channel: "cis:crane:snapshots"
+  web:
+    allowed-origins:
+      - "http://localhost:*"

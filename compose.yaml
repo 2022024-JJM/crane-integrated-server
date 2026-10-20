@@ -1,0 +1,30 @@
+name: cis
+services:
+  timescaledb:
+    image: docker.io/timescale/timescaledb:latest-pg17
+    ports:
+      - "${CIS_DB_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: cis
+      POSTGRES_USER: cis
+      POSTGRES_PASSWORD: cis
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - cis-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cis -d cis"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: docker.io/library/redis:8-alpine
+    ports:
+      - "${CIS_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+volumes:
+  cis-pg: {}
