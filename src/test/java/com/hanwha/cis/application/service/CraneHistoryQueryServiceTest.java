@@ -16,6 +16,7 @@ import com.hanwha.cis.domain.model.TagValue;
 import com.hanwha.cis.support.InMemoryCraneHistoryPort;
 import com.hanwha.cis.support.InMemoryCraneRegistryPort;
 import com.hanwha.cis.support.InMemoryCraneStateStore;
+import com.hanwha.cis.support.MutableClock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -31,8 +32,9 @@ class CraneHistoryQueryServiceTest {
     private final InMemoryCraneHistoryPort history = new InMemoryCraneHistoryPort();
     private final InMemoryCraneRegistryPort cranes = new InMemoryCraneRegistryPort();
     private final CraneStateRegistry registry = new CraneStateRegistry(new InMemoryCraneStateStore());
+    private final MutableClock clock = new MutableClock(T0.plus(Duration.ofDays(1)));
     private final CraneHistoryQueryService service =
-            new CraneHistoryQueryService(history, cranes, registry, LIMITS);
+            new CraneHistoryQueryService(history, cranes, registry, clock, LIMITS);
 
     private static CraneSnapshot snapshot(Instant at, boolean online, int height) {
         return new CraneSnapshot("C_867", "isl-ocean-crane", "F5_1_Bay", at, at, online,
@@ -89,7 +91,8 @@ class CraneHistoryQueryServiceTest {
     @Test
     void truncatesWhenRowLimitExceeded() {
         Limits tight = new Limits(Duration.ofHours(1), SEC, 3, 2, 10);
-        CraneHistoryQueryService tightService = new CraneHistoryQueryService(history, cranes, registry, tight);
+        CraneHistoryQueryService tightService =
+                new CraneHistoryQueryService(history, cranes, registry, clock, tight);
         for (int i = 1; i <= 4; i++) {
             history.addHistory(T0.plusMillis(i * 200L), snapshot(T0.plusMillis(i * 200L), true, i));
         }
@@ -110,6 +113,50 @@ class CraneHistoryQueryServiceTest {
                 .isThrownBy(() -> service.frames("C_867", T0, T0.plus(Duration.ofHours(1)).plusMillis(1), SEC));
         assertThatExceptionOfType(InvalidQueryException.class)
                 .isThrownBy(() -> service.frames("C_867", null, T0, SEC));
+    }
+
+    @Test
+    void rejectsFromInTheFuture() {
+        clock.set(T0);
+
+        assertThatExceptionOfType(InvalidQueryException.class)
+                .isThrownBy(() -> service.frames("C_867", T0.plusSeconds(1), T0.plusSeconds(5), SEC))
+                .withMessage("from must be in the past");
+        assertThatExceptionOfType(InvalidQueryException.class)
+                .isThrownBy(() -> service.frames("C_867", T0, T0.plusSeconds(5), SEC))
+                .withMessage("from must be in the past");
+        assertThatExceptionOfType(InvalidQueryException.class)
+                .isThrownBy(() -> service.changes("C_867", T0.plusSeconds(1), T0.plusSeconds(5), null, null))
+                .withMessage("from must be in the past");
+    }
+
+    @Test
+    void clampsFutureToToLastStepAtOrBeforeNow() {
+        clock.set(T0.plusMillis(2500));
+        history.addHistory(T0.minusSeconds(10), snapshot(T0.minusSeconds(10), true, 0));
+        history.addHistory(T0.plusMillis(1500), snapshot(T0.plusMillis(1500), true, 1));
+
+        HistoryFrames frames = service.frames("C_867", T0, T0.plusSeconds(10), SEC);
+
+        assertThat(frames.to()).isEqualTo(T0.plusSeconds(2));
+        assertThat(frames.truncated()).isFalse();
+        assertThat(frames.frames()).extracting(Frame::time)
+                .containsExactly(T0, T0.plusSeconds(1), T0.plusSeconds(2));
+        assertThat(frames.frames().getLast().time()).isBeforeOrEqualTo(clock.instant());
+        assertThat(frames.frames()).extracting(f -> f.values().get("height").raw())
+                .containsExactly(0.0, 0.0, 1.0);
+    }
+
+    @Test
+    void pastGapWithoutRowsIsFilledWithBaselineUpToRequestedTo() {
+        history.addHistory(T0.minusSeconds(10), snapshot(T0.minusSeconds(10), true, 4));
+
+        HistoryFrames frames = service.frames("C_867", T0, T0.plusMillis(3500), SEC);
+
+        assertThat(frames.to()).isEqualTo(T0.plusMillis(3500));
+        assertThat(frames.frames()).extracting(Frame::time)
+                .containsExactly(T0, T0.plusSeconds(1), T0.plusSeconds(2), T0.plusSeconds(3));
+        assertThat(frames.frames()).allSatisfy(f -> assertThat(f.values().get("height").raw()).isEqualTo(4.0));
     }
 
     @Test
@@ -145,6 +192,20 @@ class CraneHistoryQueryServiceTest {
                 org.assertj.core.groups.Tuple.tuple(T0.plusSeconds(3), true));
         assertThat(second.nextCursor()).isNull();
         assertThat(second.items().getFirst().values().get("height")).isEqualTo(TagValue.of(2));
+    }
+
+    @Test
+    void changesStopAtNow() {
+        clock.set(T0.plusMillis(2500));
+        for (int i = 0; i < 4; i++) {
+            history.addDiff(T0.plusSeconds(i), snapshot(T0.plusSeconds(i), true, i));
+        }
+
+        HistoryChanges changes = service.changes("C_867", T0, T0.plusSeconds(10), null, 10);
+
+        assertThat(changes.items()).extracting(Change::time)
+                .containsExactly(T0, T0.plusSeconds(1), T0.plusSeconds(2));
+        assertThat(changes.nextCursor()).isNull();
     }
 
     @Test

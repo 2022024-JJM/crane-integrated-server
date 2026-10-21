@@ -120,6 +120,7 @@ REST (`/api`, 오류는 RFC 9457 ProblemDetail):
 | `GET /api/cranes/{craneId}/changes` | `from`, `to`, `after` (커서), `limit` (기본 500, 최대 5000) | 상태가 변한 시점의 행 + `nextCursor` |
 
 범위는 최대 1시간, 프레임 수는 최대 5000개이며 넘으면 400입니다.
+`from`이 현재 시각 이후면 400이고, `to`가 현재 시각 이후면 현재까지로 자릅니다(`history`는 `from` 기준 step 격자에서 현재 이하의 마지막 프레임까지 만들고, 응답 `to`에 잘린 끝 시각을 담습니다).
 
 스냅샷 형태:
 

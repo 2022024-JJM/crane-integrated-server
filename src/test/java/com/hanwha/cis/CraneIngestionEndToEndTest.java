@@ -176,6 +176,8 @@ class CraneIngestionEndToEndTest {
                 assertThat(count("crane_history_diff", "C_867")).isGreaterThanOrEqualTo(2));
         String from = Instant.ofEpochMilli(t1 - 2_000).toString();
         String to = Instant.ofEpochMilli(t2 + 2_000).toString();
+        // to가 아직 미래면 현재 시각으로 잘리므로, to가 지난 뒤에 조회해 프레임 수를 고정한다.
+        await().atMost(Duration.ofSeconds(10)).until(() -> System.currentTimeMillis() > t2 + 2_000);
         Map<String, Object> history = getJson(rest,
                 "/api/cranes/C_867/history?from=" + from + "&to=" + to + "&step=1s");
         assertThat(history.get("craneId")).isEqualTo("C_867");
@@ -197,6 +199,9 @@ class CraneIngestionEndToEndTest {
         // 오류 응답
         assertThat(status(rest, "/api/cranes/C_999").value()).isEqualTo(404);
         assertThat(status(rest, "/api/cranes/C_867/history?from=" + to + "&to=" + from).value()).isEqualTo(400);
+        Instant future = Instant.now().plusSeconds(60);
+        assertThat(status(rest, "/api/cranes/C_867/history?from=" + future + "&to=" + future.plusSeconds(10))
+                .value()).isEqualTo(400);
 
         session.disconnect();
         stomp.stop();

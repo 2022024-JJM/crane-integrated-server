@@ -8,6 +8,7 @@ import com.hanwha.cis.application.port.out.CraneHistoryPort.DiffRow;
 import com.hanwha.cis.application.port.out.CraneHistoryPort.HistoryRow;
 import com.hanwha.cis.application.port.out.CraneRegistryPort;
 import com.hanwha.cis.domain.model.TagValue;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -35,37 +36,44 @@ public class CraneHistoryQueryService implements QueryCraneHistoryUseCase {
     private final CraneHistoryPort history;
     private final CraneRegistryPort cranes;
     private final CraneStateRegistry registry;
+    private final Clock clock;
     private final Limits limits;
 
     public CraneHistoryQueryService(CraneHistoryPort history, CraneRegistryPort cranes,
-            CraneStateRegistry registry, Limits limits) {
+            CraneStateRegistry registry, Clock clock, Limits limits) {
         this.history = history;
         this.cranes = cranes;
         this.registry = registry;
+        this.clock = clock;
         this.limits = limits;
     }
 
     @Override
     public HistoryFrames frames(String craneId, Instant from, Instant to, Duration step) {
         requireKnownCrane(craneId);
-        validateRange(from, to);
+        Instant now = clock.instant();
+        validateRange(from, to, now);
         Duration effectiveStep = step == null ? limits.defaultStep() : step;
         if (effectiveStep.compareTo(MIN_STEP) < 0) {
             throw new InvalidQueryException("step must be at least " + MIN_STEP);
         }
-        long points = Duration.between(from, to).toMillis() / effectiveStep.toMillis() + 1;
+        // 미래 구간은 프레임을 만들지 않는다: now 이하의 마지막 step 격자 시각에서 끊는다.
+        Instant end = to.isAfter(now)
+                ? from.plus(effectiveStep.multipliedBy(Duration.between(from, now).dividedBy(effectiveStep)))
+                : to;
+        long points = Duration.between(from, end).toMillis() / effectiveStep.toMillis() + 1;
         if (points > limits.maxPoints()) {
             throw new InvalidQueryException(
                     "too many points: " + points + " > " + limits.maxPoints() + " (use a larger step)");
         }
 
         Optional<HistoryRow> baseline = history.baseline(craneId, from);
-        List<HistoryRow> rows = history.range(craneId, from, to, limits.maxPoints() + 1);
+        List<HistoryRow> rows = history.range(craneId, from, end, limits.maxPoints() + 1);
         boolean truncated = rows.size() > limits.maxPoints();
         if (truncated) {
             rows = rows.subList(0, limits.maxPoints());
         }
-        Instant lastFrameAt = truncated ? rows.getLast().time() : to;
+        Instant lastFrameAt = truncated ? rows.getLast().time() : end;
 
         TreeSet<String> tags = new TreeSet<>();
         baseline.ifPresent(row -> tags.addAll(row.snapshot().tags().keySet()));
@@ -82,14 +90,15 @@ public class CraneHistoryQueryService implements QueryCraneHistoryUseCase {
             frames.add(new Frame(cursor, current));
         }
         Frame baselineFrame = baseline.map(row -> new Frame(row.time(), row.snapshot().values())).orElse(null);
-        return new HistoryFrames(craneId, from, to, effectiveStep, List.copyOf(tags), baselineFrame, frames,
+        return new HistoryFrames(craneId, from, end, effectiveStep, List.copyOf(tags), baselineFrame, frames,
                 truncated);
     }
 
     @Override
     public HistoryChanges changes(String craneId, Instant from, Instant to, Instant after, Integer limit) {
         requireKnownCrane(craneId);
-        validateRange(from, to);
+        Instant now = clock.instant();
+        validateRange(from, to, now);
         int effectiveLimit = limit == null ? limits.defaultChangeLimit() : limit;
         if (effectiveLimit < 1 || effectiveLimit > limits.maxChangeLimit()) {
             throw new InvalidQueryException("limit must be between 1 and " + limits.maxChangeLimit());
@@ -97,7 +106,9 @@ public class CraneHistoryQueryService implements QueryCraneHistoryUseCase {
         // 첫 페이지는 from을 포함해야 하므로 1ms 앞을 exclusive 하한으로 쓴다(시각은 ms 정밀도).
         Instant lowerExclusive = after != null && after.isAfter(from) ? after : from.minusMillis(1);
 
-        List<DiffRow> rows = history.diffs(craneId, lowerExclusive, to, effectiveLimit + 1);
+        Instant end = to.isAfter(now) ? now : to;
+
+        List<DiffRow> rows = history.diffs(craneId, lowerExclusive, end, effectiveLimit + 1);
         boolean more = rows.size() > effectiveLimit;
         if (more) {
             rows = rows.subList(0, effectiveLimit);
@@ -115,12 +126,15 @@ public class CraneHistoryQueryService implements QueryCraneHistoryUseCase {
         }
     }
 
-    private void validateRange(Instant from, Instant to) {
+    private void validateRange(Instant from, Instant to, Instant now) {
         if (from == null || to == null) {
             throw new InvalidQueryException("from and to are required");
         }
         if (!from.isBefore(to)) {
             throw new InvalidQueryException("from must be before to");
+        }
+        if (!from.isBefore(now)) {
+            throw new InvalidQueryException("from must be in the past");
         }
         if (Duration.between(from, to).compareTo(limits.maxRange()) > 0) {
             throw new InvalidQueryException("range must not exceed " + limits.maxRange());

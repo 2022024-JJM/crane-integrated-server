@@ -61,9 +61,9 @@ public class ApplicationConfig {
 
     @Bean
     CraneHistoryQueryService craneHistoryQueryService(CraneHistoryPort history, CraneRegistryPort cranes,
-            CraneStateRegistry registry, CisProperties properties) {
+            CraneStateRegistry registry, Clock clock, CisProperties properties) {
         CisProperties.Query query = properties.query();
-        return new CraneHistoryQueryService(history, cranes, registry, new CraneHistoryQueryService.Limits(
+        return new CraneHistoryQueryService(history, cranes, registry, clock, new CraneHistoryQueryService.Limits(
                 query.maxRange(), query.defaultStep(), query.maxPoints(), query.defaultChangeLimit(),
                 query.maxChangeLimit()));
     }
