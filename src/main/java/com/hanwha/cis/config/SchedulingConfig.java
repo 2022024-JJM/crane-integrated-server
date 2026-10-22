@@ -14,6 +14,7 @@ public class SchedulingConfig {
     public static final String PUSH_SCHEDULER = "pushScheduler";
     public static final String HISTORY_SCHEDULER = "historyScheduler";
     public static final String SUMMARY_SCHEDULER = "summaryScheduler";
+    public static final String WATCH_SCHEDULER = "watchScheduler";
 
     @Bean(PUSH_SCHEDULER)
     ThreadPoolTaskScheduler pushScheduler() {
@@ -28,6 +29,11 @@ public class SchedulingConfig {
     @Bean(SUMMARY_SCHEDULER)
     ThreadPoolTaskScheduler summaryScheduler() {
         return singleThread("summary-");
+    }
+
+    @Bean(WATCH_SCHEDULER)
+    ThreadPoolTaskScheduler watchScheduler() {
+        return singleThread("watch-");
     }
 
     private static ThreadPoolTaskScheduler singleThread(String prefix) {

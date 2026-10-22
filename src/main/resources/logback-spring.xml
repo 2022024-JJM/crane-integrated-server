@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  출력: 콘솔(podman logs) + 파일 두 개(test 프로필 제외).
+    ${LOG_PATH}/cis.log        INFO 이상 전부
+    ${LOG_PATH}/cis-error.log  WARN 이상만
+  형식·경로·롤링 값은 application.yaml의 logging.* 에서 정한다(LOG_PATH = logging.file.path).
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!-- 외부 라이브러리의 같은 WARN·ERROR 로그는 1분에 한 번만(생략 건수는 다음 통과 때 표시). -->
+    <turboFilter class="com.hanwha.cis.config.RepeatedLogFilter">
+        <loggerPrefix>org.apache.kafka</loggerPrefix>
+        <loggerPrefix>org.springframework.kafka</loggerPrefix>
+        <loggerPrefix>io.lettuce</loggerPrefix>
+        <loggerPrefix>org.springframework.data.redis</loggerPrefix>
+        <loggerPrefix>com.zaxxer.hikari</loggerPrefix>
+        <windowSeconds>60</windowSeconds>
+    </turboFilter>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <springProfile name="!test">
+        <property name="LOG_DIR" value="${LOG_PATH:-logs}"/>
+
+        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <encoder>
+                <pattern>${FILE_LOG_PATTERN}</pattern>
+                <charset>${FILE_LOG_CHARSET}</charset>
+            </encoder>
+            <file>${LOG_DIR}/cis.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_DIR}/cis.log.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+                <maxFileSize>${LOGBACK_ROLLINGPOLICY_MAX_FILE_SIZE:-50MB}</maxFileSize>
+                <maxHistory>${LOGBACK_ROLLINGPOLICY_MAX_HISTORY:-30}</maxHistory>
+                <totalSizeCap>${LOGBACK_ROLLINGPOLICY_TOTAL_SIZE_CAP:-1536MB}</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>WARN</level>
+            </filter>
+            <encoder>
+                <pattern>${FILE_LOG_PATTERN}</pattern>
+                <charset>${FILE_LOG_CHARSET}</charset>
+            </encoder>
+            <file>${LOG_DIR}/cis-error.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_DIR}/cis-error.log.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+                <maxFileSize>${LOGBACK_ROLLINGPOLICY_MAX_FILE_SIZE:-50MB}</maxFileSize>
+                <maxHistory>${LOGBACK_ROLLINGPOLICY_MAX_HISTORY:-30}</maxHistory>
+                <totalSizeCap>512MB</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <root>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </root>
+    </springProfile>
+</configuration>

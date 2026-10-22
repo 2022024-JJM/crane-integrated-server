@@ -1,8 +1,10 @@
 package com.hanwha.cis.adapter.out.persistence;
 
+import com.hanwha.cis.application.support.FailureLog;
 import com.hanwha.cis.config.CisProperties;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -29,6 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * DB 쓰기 전용 스레드. bounded 큐를 배치로 비우고(배치 크기 또는 flush 간격), 실패하면 재시도 후 버린다.
+ * 실패 로그는 장애 시작·1분마다 지속·복구만 남기고(큐 길이·버린 건수 포함), 재시도 한 번 한 번은 DEBUG다.
  * Kafka·스케줄러 스레드는 {@link #enqueue}만 호출하므로 DB 장애가 수집·푸시를 막지 않는다.
  * INSERT는 ON CONFLICT DO NOTHING이라 재시작·재전송으로 같은 (crane_id, time)이 다시 와도 배치가 실패하지 않는다.
  */
@@ -82,6 +85,7 @@ public class HistoryWriter implements SmartLifecycle {
     private final LongAdder writeFailures = new LongAdder();
     private final LongAdder dropped = new LongAdder();
     private final AtomicLong lastDropLogAt = new AtomicLong();
+    private final FailureLog writeFailureLog;
 
     private volatile boolean running;
     private Thread thread;
@@ -95,6 +99,9 @@ public class HistoryWriter implements SmartLifecycle {
         this.batchSize = history.batchSize();
         this.flushInterval = history.flushInterval();
         this.maxRetries = history.maxRetries();
+        this.writeFailureLog = new FailureLog(log, "History write to DB", Clock.systemUTC(),
+                () -> "queue=" + queue.size() + "/" + history.queueCapacity() + ", dropped=" + dropped.sum()
+                        + " total");
     }
 
     /** 큐가 가득 차면 버리고 false. 호출 스레드를 막지 않는다. */
@@ -105,7 +112,7 @@ public class HistoryWriter implements SmartLifecycle {
         dropped.increment();
         long now = System.currentTimeMillis();
         long last = lastDropLogAt.get();
-        if (now - last > 10_000 && lastDropLogAt.compareAndSet(last, now)) {
+        if (now - last > 60_000 && lastDropLogAt.compareAndSet(last, now)) {
             log.warn("History write queue is full ({}), dropping writes (dropped so far: {})",
                     queue.size(), dropped.sum());
         }
@@ -200,8 +207,8 @@ public class HistoryWriter implements SmartLifecycle {
                 Thread.currentThread().interrupt();
                 break;
             } catch (RuntimeException e) {
-                log.error("Unexpected error in history writer, dropping {} write(s)", batch.size(), e);
                 dropped.add(batch.size());
+                writeFailureLog.failure(e);
             } finally {
                 batch.clear();
             }
@@ -212,18 +219,20 @@ public class HistoryWriter implements SmartLifecycle {
         for (int attempt = 1; ; attempt++) {
             try {
                 transaction.executeWithoutResult(status -> flush(batch));
+                writeFailureLog.success();
                 return;
             } catch (DataAccessException | TransactionException e) {
                 writeFailures.increment();
                 if (attempt > maxRetries || !running) {
                     dropped.add(batch.size());
-                    log.error("Dropping {} history write(s) after {} attempt(s): {}", batch.size(), attempt,
-                            e.toString());
+                    writeFailureLog.failure(e);
+                    log.debug("Dropped {} history write(s) after {} attempt(s)", batch.size(), attempt);
                     return;
                 }
+                writeFailureLog.failure(e);
                 long backoffMillis = Math.min(1_000L << (attempt - 1), 10_000L);
-                log.warn("History write failed (attempt {}/{}), retrying in {} ms: {}", attempt, maxRetries + 1,
-                        backoffMillis, e.toString());
+                log.debug("History write failed (attempt {}/{}), retrying in {} ms", attempt, maxRetries + 1,
+                        backoffMillis);
                 Thread.sleep(backoffMillis);
             }
         }

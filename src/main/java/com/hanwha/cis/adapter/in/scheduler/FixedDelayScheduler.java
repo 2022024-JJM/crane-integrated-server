@@ -1,5 +1,7 @@
 package com.hanwha.cis.adapter.in.scheduler;
 
+import com.hanwha.cis.application.support.Durations;
+import com.hanwha.cis.application.support.FailureLog;
 import java.time.Duration;
 import java.util.concurrent.ScheduledFuture;
 import org.slf4j.Logger;
@@ -9,23 +11,26 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /**
  * 전용 스케줄러에서 고정 지연으로 {@link #tick()}을 반복한다. 틱 실패는 로그만 남기고 다음 틱을 계속한다
- * (같은 오류는 10초에 한 번만 WARN).
+ * (실패 시작·1분마다 지속·복구만 남김, {@link FailureLog}).
  */
 abstract class FixedDelayScheduler implements SmartLifecycle {
 
     /** HistoryWriter(100)보다 늦게 시작하고 먼저 멈춘다. */
     static final int PHASE = 200;
-    private static final long WARN_INTERVAL_MILLIS = 10_000;
 
     private final Logger log = LoggerFactory.getLogger(getClass());
     private final ThreadPoolTaskScheduler scheduler;
     private final Duration interval;
+    private final String task;
+    private final FailureLog failures;
     private volatile ScheduledFuture<?> future;
-    private volatile long lastWarnAt;
 
-    FixedDelayScheduler(ThreadPoolTaskScheduler scheduler, Duration interval) {
+    /** task는 로그에 쓰이는 작업 이름(예: "Snapshot push to Redis"). */
+    FixedDelayScheduler(ThreadPoolTaskScheduler scheduler, Duration interval, String task) {
         this.scheduler = scheduler;
         this.interval = interval;
+        this.task = task;
+        this.failures = new FailureLog(log, task);
     }
 
     protected abstract void tick();
@@ -36,7 +41,7 @@ abstract class FixedDelayScheduler implements SmartLifecycle {
             return;
         }
         future = scheduler.scheduleWithFixedDelay(this::safeTick, interval);
-        log.info("{} started (every {})", getClass().getSimpleName(), interval);
+        log.info("{} scheduled every {}", task, Durations.format(interval));
     }
 
     @Override
@@ -61,14 +66,9 @@ abstract class FixedDelayScheduler implements SmartLifecycle {
     private void safeTick() {
         try {
             tick();
+            failures.success();
         } catch (RuntimeException e) {
-            long now = System.currentTimeMillis();
-            if (now - lastWarnAt >= WARN_INTERVAL_MILLIS) {
-                lastWarnAt = now;
-                log.warn("{} tick failed: {}", getClass().getSimpleName(), e.toString());
-            } else {
-                log.debug("{} tick failed: {}", getClass().getSimpleName(), e.toString());
-            }
+            failures.failure(e);
         }
     }
 }

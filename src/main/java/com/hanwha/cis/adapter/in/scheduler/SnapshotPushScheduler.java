@@ -16,7 +16,7 @@ public class SnapshotPushScheduler extends FixedDelayScheduler {
     public SnapshotPushScheduler(PushSnapshotsUseCase push,
             @Qualifier(SchedulingConfig.PUSH_SCHEDULER) ThreadPoolTaskScheduler scheduler,
             CisProperties properties) {
-        super(scheduler, properties.push().interval());
+        super(scheduler, properties.push().interval(), "Snapshot push to Redis");
         this.push = push;
     }
 

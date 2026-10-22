@@ -16,7 +16,7 @@ public class HistoryRecordScheduler extends FixedDelayScheduler {
     public HistoryRecordScheduler(RecordHistoryUseCase record,
             @Qualifier(SchedulingConfig.HISTORY_SCHEDULER) ThreadPoolTaskScheduler scheduler,
             CisProperties properties) {
-        super(scheduler, properties.history().interval());
+        super(scheduler, properties.history().interval(), "History recording");
         this.record = record;
     }
 

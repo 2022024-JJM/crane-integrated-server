@@ -1,5 +1,6 @@
 package com.hanwha.cis.adapter.in.websocket;
 
+import com.hanwha.cis.application.support.FailureLog;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import java.util.List;
 import org.slf4j.Logger;
@@ -21,6 +22,7 @@ public class RedisSnapshotSubscriber implements MessageListener {
 
     private final SnapshotStompBroadcaster broadcaster;
     private final JsonMapper json;
+    private final FailureLog failureLog = new FailureLog(log, "Snapshot forward from Redis to STOMP");
 
     public RedisSnapshotSubscriber(SnapshotStompBroadcaster broadcaster, JsonMapper json) {
         this.broadcaster = broadcaster;
@@ -32,8 +34,9 @@ public class RedisSnapshotSubscriber implements MessageListener {
         try {
             List<CraneSnapshot> snapshots = json.readValue(message.getBody(), SNAPSHOT_LIST);
             broadcaster.broadcast(snapshots);
+            failureLog.success();
         } catch (RuntimeException e) {
-            log.warn("Failed to forward snapshot message from Redis: {}", e.toString());
+            failureLog.failure(e);
         }
     }
 }

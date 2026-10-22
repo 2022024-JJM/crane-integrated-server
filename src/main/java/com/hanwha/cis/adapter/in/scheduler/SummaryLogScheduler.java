@@ -15,7 +15,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 60초마다 요약 한 줄. 카운터는 Micrometer에서 읽어 직전 로그 이후 증가분을 찍는다.
- * 예: ingest received=53100 changed=1200 skipped=0 | history rows=180/12 queue=0 failures=0 dropped=0 | ws sessions=1 | cranes online=3/3
+ * 예: ingest received=53100 changed=1200 skipped=0 (parse=0 mismatch=0 late=0) | kafka connections=3 partitions=3
+ *     | history rows=180/12 queue=0 failures=0 dropped=0 | ws sessions=1 | cranes online=3/3
  */
 @Component
 public class SummaryLogScheduler extends FixedDelayScheduler {
@@ -28,15 +29,20 @@ public class SummaryLogScheduler extends FixedDelayScheduler {
 
     public SummaryLogScheduler(MeterRegistry meters,
             @Qualifier(SchedulingConfig.SUMMARY_SCHEDULER) ThreadPoolTaskScheduler scheduler) {
-        super(scheduler, INTERVAL);
+        super(scheduler, INTERVAL, "Summary log");
         this.meters = meters;
     }
 
     @Override
     protected void tick() {
-        log.info("ingest received={} changed={} skipped={} | history rows={}/{} queue={} failures={} dropped={}"
+        log.info("ingest received={} changed={} skipped={} (parse={} mismatch={} late={})"
+                        + " | kafka connections={} partitions={}"
+                        + " | history rows={}/{} queue={} failures={} dropped={}"
                         + " | ws sessions={} | cranes online={}/{}",
                 delta("cis.ingest.received"), delta("cis.ingest.changed"), delta("cis.ingest.skipped"),
+                delta("cis.ingest.skipped", "reason", "parse"), delta("cis.ingest.skipped", "reason", "mismatch"),
+                delta("cis.ingest.skipped", "reason", "late"),
+                gauge("cis.kafka.connections"), gauge("cis.kafka.partitions"),
                 delta("cis.history.rows", "table", "crane_history"),
                 delta("cis.history.rows", "table", "crane_history_diff"),
                 gauge("cis.history.queue_size"), delta("cis.history.write_failures"), delta("cis.history.dropped"),

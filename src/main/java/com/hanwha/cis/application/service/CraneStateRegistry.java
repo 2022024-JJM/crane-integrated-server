@@ -1,6 +1,7 @@
 package com.hanwha.cis.application.service;
 
 import com.hanwha.cis.application.port.out.CraneStateStorePort;
+import com.hanwha.cis.application.support.FailureLog;
 import com.hanwha.cis.domain.model.ApplyResult;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import com.hanwha.cis.domain.model.CraneState;
@@ -39,7 +40,7 @@ public class CraneStateRegistry {
         try {
             saved = store.findAll();
         } catch (RuntimeException e) {
-            log.warn("Could not restore crane states from store, starting empty: {}", e.toString());
+            log.warn("Could not restore crane states from store, starting empty: {}", FailureLog.describe(e));
             return;
         }
         int restored = 0;

@@ -28,6 +28,25 @@ spring:
     problemdetails:
       enabled: true
 
+logging:
+  include-application-name: false
+  pattern:
+    # JVM은 UTC(-Duser.timezone=UTC)로 돌지만 로그 시각은 KST로 찍는다.
+    dateformat: "yyyy-MM-dd HH:mm:ss.SSSXXX,Asia/Seoul"
+  file:
+    path: ${LOG_PATH:logs}
+  logback:
+    rollingpolicy:
+      # cis.log 기준. cis-error.log는 512MB 상한(합계 2GB)이며 크기·보관일은 같다.
+      max-file-size: 50MB
+      max-history: 30
+      total-size-cap: 1536MB
+  level:
+    # Kafka 클라이언트 INFO(설정 덤프, 재접속, 리밸런스)는 끈다. 수신 상태는 IngestWatchScheduler가 판정해 남긴다.
+    org.apache.kafka: WARN
+    # 30분마다 남기는 WebSocket 통계 한 줄. 세션 수는 요약 로그에 있다.
+    org.springframework.web.socket.config.WebSocketMessageBrokerStats: WARN
+
 management:
   endpoints:
     web:

@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * 애플리케이션·어댑터 카운터를 Micrometer에 바인딩한다(애플리케이션 계층은 Micrometer를 모른다).
  * cis.ingest.received / changed / skipped{reason}, cis.history.rows{table} / write_failures / dropped / queue_size,
- * cis.cranes.online / total. (cis.ws.sessions 는 websocket 어댑터가 직접 등록)
+ * cis.cranes.online / total. (cis.ws.sessions 는 websocket 어댑터, cis.kafka.connections / partitions 는 kafka 어댑터가 직접 등록)
  */
 @Configuration
 public class MetricsConfig {
