@@ -1,3 +1,4 @@
+.git
 .gradle
 build
 logs
@@ -6,3 +7,5 @@ logs
 out
 bin
 .vscode
+.env
+.env.*

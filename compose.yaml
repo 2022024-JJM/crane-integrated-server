@@ -1,13 +1,27 @@
+# 로컬·배포 공용. 환경 차이는 .env 로만 둔다(.env.prod.example). 로컬은 .env 없이 DB·Redis 만, 배포는 COMPOSE_PROFILES=app 으로 서버까지.
+# 서비스는 각각 올리고 내린다(stop app / up -d app / restart redis). `down -v` 는 DB 볼륨을 지우니 배포에서 금지.
 name: cis
+
+# json-file 은 기본 회전이 없어 모든 서비스에 상한을 둔다.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   timescaledb:
-    image: docker.io/timescale/timescaledb:latest-pg17
+    image: timescale/timescaledb:latest-pg17
+    container_name: cis-timescaledb
+    restart: "${CIS_RESTART:-no}"
     ports:
-      - "${CIS_DB_PORT:-5432}:5432"
+      # 127.0.0.1 에만 묶는다(0.0.0.0 공개는 호스트 방화벽을 우회한다).
+      - "127.0.0.1:${CIS_DB_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: cis
       POSTGRES_USER: cis
-      POSTGRES_PASSWORD: cis
+      # 볼륨을 처음 만들 때만 반영된다.
+      POSTGRES_PASSWORD: ${CIS_DB_PASSWORD:-cis}
       TZ: UTC
       PGTZ: UTC
     volumes:
@@ -17,31 +31,40 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    logging: *logging
+
   redis:
-    image: docker.io/library/redis:8-alpine
+    image: redis:8-alpine
+    container_name: cis-redis
+    restart: "${CIS_RESTART:-no}"
     ports:
-      - "${CIS_REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${CIS_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 10
-  # 서버 자체. 기본 `podman compose up -d`에는 포함되지 않고 --profile app 일 때만 뜬다.
+    logging: *logging
+
+  # 프로필 app 일 때만 뜬다. 로컬 bootRun 과 포트·Kafka 컨슈머 그룹이 겹치지 않게.
   app:
     profiles: ["app"]
+    # 이미지가 없으면 빌드한다. 배포는 미리 빌드한 태그를 CIS_APP_TAG 로 고정.
     build:
       context: .
-      dockerfile: Containerfile
-    image: localhost/crane-integrated-server:latest
-    # DB가 없으면 기동에 실패해 종료하므로(Flyway 검증) 재시작 정책으로 다시 띄운다. Redis는 없어도 뜬다.
+    image: crane-integrated-server:${CIS_APP_TAG:-latest}
+    container_name: cis-app
+    # DB 없이는 기동 실패로 종료하므로(Flyway) 재시작으로 다시 띄운다. Redis 는 없어도 뜬다.
     restart: unless-stopped
+    # 첫 기동 순서용. 운영 중 stop/restart 에는 영향 없다.
     depends_on:
       timescaledb:
         condition: service_healthy
     environment:
       DB_URL: jdbc:postgresql://timescaledb:5432/cis?reWriteBatchedInserts=true
+      DB_PASSWORD: ${CIS_DB_PASSWORD:-cis}
       REDIS_HOST: redis
-      # Kafka가 광고하는 주소로 붙어야 한다. ISL Kafka는 컨테이너 쪽으로 kafka:9092(isl-infra 네트워크)를 광고한다.
+      # 브로커가 광고하는 주소. ISL Kafka 는 컨테이너 쪽으로 kafka:9092(isl-infra)를 광고한다.
       KAFKA_BOOTSTRAP_SERVERS: ${CIS_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       LOG_PATH: /app/logs
     ports:
@@ -51,8 +74,13 @@ services:
     networks:
       - default
       - kafka
+    deploy:
+      resources:
+        limits:
+          # JVM 힙은 이 값의 75%(Dockerfile).
+          memory: ${CIS_APP_MEMORY:-1g}
     healthcheck:
-      # liveness만 본다(Redis 장애로 unhealthy가 되지 않게). 이미지에 curl이 없을 수 있어 bash로 요청한다.
+      # liveness 만 본다(Redis 장애로 unhealthy 가 되지 않게). curl 이 없어 bash 로 요청.
       test:
         - CMD
         - bash
@@ -62,10 +90,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 60s
+    logging: *logging
+
 networks:
   kafka:
     external: true
     name: ${CIS_KAFKA_NETWORK:-isl-infra}
+
 volumes:
   cis-pg: {}
   cis-logs: {}

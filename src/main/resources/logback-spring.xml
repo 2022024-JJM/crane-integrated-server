@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  출력: 콘솔(podman logs) + 파일 두 개(test 프로필 제외).
+  출력: 콘솔(docker compose logs) + 파일 두 개(test 프로필 제외).
     ${LOG_PATH}/cis.log        INFO 이상 전부
     ${LOG_PATH}/cis-error.log  WARN 이상만
   형식·경로·롤링 값은 application.yaml의 logging.* 에서 정한다(LOG_PATH = logging.file.path).

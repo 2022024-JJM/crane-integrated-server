@@ -43,7 +43,7 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-// 실행용 bootJar만 만든다(-plain.jar 제외). Containerfile이 build/libs의 jar 하나를 복사한다.
+// 실행용 bootJar만 만든다(-plain.jar 제외). Dockerfile이 build/libs의 jar 하나를 복사한다.
 tasks.named('jar') {
     enabled = false
 }
