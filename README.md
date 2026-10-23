@@ -65,7 +65,8 @@ com.hanwha.cis
 │   └── support       FailureLog(연속 실패 로그를 시작·지속·복구로 줄임), Durations
 ├── adapter
 │   ├── in.kafka      CraneEventKafkaListener, KafkaListenerMetrics(cis.kafka.*)
-│   ├── in.scheduler  SnapshotPushScheduler(250ms), HistoryRecordScheduler(1s), SummaryLogScheduler(60s), IngestWatchScheduler(5s)
+│   ├── in.scheduler  SnapshotPushScheduler(250ms), HistoryRecordScheduler(1s), SummaryLogScheduler(60s), IngestWatchScheduler(5s),
+│   │                 PushWatchScheduler(5s)
 │   ├── in.web        CraneController, CraneHistoryController, ApiExceptionHandler(ProblemDetail)
 │   ├── in.websocket  StompConfig, SnapshotStompBroadcaster, RedisSnapshotSubscriber
 │   ├── out.redis     RedisCraneStateStore, RedisSnapshotPublisher
@@ -144,7 +145,7 @@ REST (`/api`, 오류는 RFC 9457 ProblemDetail):
 | `GET /api/cranes/{craneId}/history` | `from`, `to` (ISO-8601, 필수), `step` (기본 1s, 예: `5s`, `1m`) | baseline + step 간격 프레임(sample-and-hold) |
 | `GET /api/cranes/{craneId}/changes` | `from`, `to`, `after` (커서), `limit` (기본 500, 최대 5000) | 상태가 변한 시점의 행 + `nextCursor` |
 
-범위는 최대 1시간, 프레임 수는 최대 5000개이며 넘으면 400입니다.
+범위는 최대 1시간, 프레임 수는 최대 5000개이며 넘으면 400입니다. DB에 접근하지 못하면 `history`·`changes`는 503입니다.
 `from`이 현재 시각 이후면 400이고, `to`가 현재 시각 이후면 현재까지로 자릅니다(`history`는 `from` 기준 step 격자에서 현재 이하의 마지막 프레임까지 만들고, 응답 `to`에 잘린 끝 시각을 담습니다).
 
 스냅샷 형태:
@@ -203,6 +204,9 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 | `Kafka ingest stopped: connected to … but no partition of topic … is assigned` | 토픽이 없거나, 브로커가 알려 주는 주소(advertised listener)에 이 서버가 접근하지 못함 |
 | `Kafka ingest stopped: connected with N partition(s) … but no messages` | Kafka는 정상이고 상류(ISL Kafka Provider·MQTT Agent·Node-RED)가 발행하지 않음 |
 | `Cranes offline, no data for 30s …` / `Cranes online …` | 크레인별 수신 끊김·복귀 |
+| `Live push stalled: …` / `Live push resumed after …` | Redis 발행은 되는데 구독으로 돌아오지 않아 웹 화면이 갱신되지 않음. Redis 구독 상태 확인 |
+| `History writes dropped: N failed to write (time … ~ …), …` | 이력을 버렸음(ERROR, 1분마다). `time` 범위가 DB에 비는 구간 = 리플레이 공백 |
+| `History writes no longer dropped: …` | 이력 유실이 끝남(총 건수·기간) |
 | `… failed: …` → `… still failing for …` → `… recovered after …` | Redis·DB 등 연속 실패의 시작·지속(1분마다)·복구 |
 | `Kafka listener failed, record skipped: …` | 메시지 처리 중 예외(버그). 같은 원인은 1분에 한 건 |
 | `…: suppressed N repeat(s) of the following message in the last …` | 바로 다음 줄의 라이브러리 경고가 그동안 N번 더 났음 |
@@ -211,8 +215,10 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 
 ```
 ingest received=… changed=… skipped=… (parse=… mismatch=… late=…) | kafka connections=… partitions=…
-  | history rows=…/… queue=… failures=… dropped=… | ws sessions=… | cranes online=…/…
+  | history rows=…/… queue=… failures=… dropped=… | push published=… forwarded=… | ws sessions=… | cranes online=…/…
 ```
+
+`push`는 Redis 채널에 발행한 메시지 수와 구독으로 받아 STOMP로 넘긴 메시지 수입니다. 정상이면 같습니다.
 
 ## 테스트
 

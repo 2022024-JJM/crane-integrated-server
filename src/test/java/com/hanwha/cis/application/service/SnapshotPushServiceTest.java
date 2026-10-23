@@ -106,5 +106,6 @@ class SnapshotPushServiceTest {
         assertThat(flakyService.pushDirty()).isEqualTo(1);
         assertThat(flaky.published()).hasSize(2);
         assertThat(flaky.published().getLast()).extracting(CraneSnapshot::craneId).isEqualTo(List.of("C_867"));
+        assertThat(flakyService.published()).as("failed publishes are not counted").isEqualTo(1);
     }
 }

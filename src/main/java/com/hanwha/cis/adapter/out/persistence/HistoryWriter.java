@@ -1,5 +1,6 @@
 package com.hanwha.cis.adapter.out.persistence;
 
+import com.hanwha.cis.adapter.out.persistence.DroppedWritesLog.Reason;
 import com.hanwha.cis.application.support.FailureLog;
 import com.hanwha.cis.config.CisProperties;
 import java.sql.PreparedStatement;
@@ -16,8 +17,8 @@ import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
@@ -31,7 +32,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * DB 쓰기 전용 스레드. bounded 큐를 배치로 비우고(배치 크기 또는 flush 간격), 실패하면 재시도 후 버린다.
- * 실패 로그는 장애 시작·1분마다 지속·복구만 남기고(큐 길이·버린 건수 포함), 재시도 한 번 한 번은 DEBUG다.
+ * 실패 로그는 장애 시작·1분마다 지속·복구만 남기고(큐 길이 포함), 재시도 한 번 한 번은 DEBUG다.
+ * 버린 쓰기(재시도 소진·큐 가득 참·종료 시 남은 것)는 원인별 건수와 time 범위를 ERROR로 남긴다({@link DroppedWritesLog}).
  * Kafka·스케줄러 스레드는 {@link #enqueue}만 호출하므로 DB 장애가 수집·푸시를 막지 않는다.
  * INSERT는 ON CONFLICT DO NOTHING이라 재시작·재전송으로 같은 (crane_id, time)이 다시 와도 배치가 실패하지 않는다.
  */
@@ -60,6 +62,9 @@ public class HistoryWriter implements SmartLifecycle {
                                   VALUES (s.crane_id, s.station_id, s.bay, s.seen_at, s.seen_at)""";
 
     public sealed interface WriteOp permits HistoryInsert, DiffInsert, CraneUpsert {
+
+        /** 행의 time(업서트는 seenAt). 유실 로그의 시각 범위에 쓴다. */
+        Instant time();
     }
 
     public record HistoryInsert(Instant time, String craneId, String bay, String stateJson) implements WriteOp {
@@ -70,6 +75,11 @@ public class HistoryWriter implements SmartLifecycle {
     }
 
     public record CraneUpsert(String craneId, String stationId, String bay, Instant seenAt) implements WriteOp {
+
+        @Override
+        public Instant time() {
+            return seenAt;
+        }
     }
 
     private final BlockingQueue<WriteOp> queue;
@@ -84,8 +94,8 @@ public class HistoryWriter implements SmartLifecycle {
     private final LongAdder craneUpserts = new LongAdder();
     private final LongAdder writeFailures = new LongAdder();
     private final LongAdder dropped = new LongAdder();
-    private final AtomicLong lastDropLogAt = new AtomicLong();
     private final FailureLog writeFailureLog;
+    private final DroppedWritesLog droppedLog;
 
     private volatile boolean running;
     private Thread thread;
@@ -99,9 +109,10 @@ public class HistoryWriter implements SmartLifecycle {
         this.batchSize = history.batchSize();
         this.flushInterval = history.flushInterval();
         this.maxRetries = history.maxRetries();
-        this.writeFailureLog = new FailureLog(log, "History write to DB", Clock.systemUTC(),
-                () -> "queue=" + queue.size() + "/" + history.queueCapacity() + ", dropped=" + dropped.sum()
-                        + " total");
+        Clock clock = Clock.systemUTC();
+        Supplier<String> queueDetail = () -> "queue=" + queue.size() + "/" + history.queueCapacity();
+        this.writeFailureLog = new FailureLog(log, "History write to DB", clock, queueDetail);
+        this.droppedLog = new DroppedWritesLog(log, clock, queueDetail);
     }
 
     /** 큐가 가득 차면 버리고 false. 호출 스레드를 막지 않는다. */
@@ -110,12 +121,7 @@ public class HistoryWriter implements SmartLifecycle {
             return true;
         }
         dropped.increment();
-        long now = System.currentTimeMillis();
-        long last = lastDropLogAt.get();
-        if (now - last > 60_000 && lastDropLogAt.compareAndSet(last, now)) {
-            log.warn("History write queue is full ({}), dropping writes (dropped so far: {})",
-                    queue.size(), dropped.sum());
-        }
+        droppedLog.record(Reason.QUEUE_FULL, List.of(op));
         return false;
     }
 
@@ -166,9 +172,8 @@ public class HistoryWriter implements SmartLifecycle {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        if (!queue.isEmpty()) {
-            log.warn("Stopped with {} unwritten history write(s)", queue.size());
-        }
+        droppedLog.record(Reason.SHUTDOWN, new ArrayList<>(queue));
+        droppedLog.flush();
     }
 
     @Override
@@ -208,9 +213,11 @@ public class HistoryWriter implements SmartLifecycle {
                 break;
             } catch (RuntimeException e) {
                 dropped.add(batch.size());
+                droppedLog.record(Reason.WRITE_FAILED, batch);
                 writeFailureLog.failure(e);
             } finally {
                 batch.clear();
+                droppedLog.report();
             }
         }
     }
@@ -225,8 +232,8 @@ public class HistoryWriter implements SmartLifecycle {
                 writeFailures.increment();
                 if (attempt > maxRetries || !running) {
                     dropped.add(batch.size());
+                    droppedLog.record(Reason.WRITE_FAILED, batch);
                     writeFailureLog.failure(e);
-                    log.debug("Dropped {} history write(s) after {} attempt(s)", batch.size(), attempt);
                     return;
                 }
                 writeFailureLog.failure(e);

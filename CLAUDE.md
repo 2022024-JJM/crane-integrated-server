@@ -64,7 +64,7 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 ## 스레드 규칙
 
 - Kafka 리스너 스레드(파티션당 1개)는 메모리 상태(`CraneStateRegistry`)만 갱신한다. DB·Redis를 직접 호출하지 않는다.
-- 푸시(250ms)·이력(1s)·요약 로그(60s)·수신 감시(5s)는 각각 `SchedulingConfig`의 전용 single-thread 스케줄러에서 돈다. 새 주기 작업은 `FixedDelayScheduler`를 상속해 만들고 전용 스케줄러 빈을 추가한다.
+- 푸시(250ms)·이력(1s)·요약 로그(60s)·수신 감시(5s)·푸시 감시(5s)는 각각 `SchedulingConfig`의 전용 single-thread 스케줄러에서 돈다. 새 주기 작업은 `FixedDelayScheduler`를 상속해 만들고 전용 스케줄러 빈을 추가한다.
 - DB 쓰기는 `HistoryWriter` 스레드만 한다. 다른 스레드는 `enqueue`로 큐에 넣는다(큐가 차면 버리고 카운트).
 - STOMP 전송(`SimpMessagingTemplate`)은 Redis 구독 executor(`redis-sub-`)에서 한다.
 
@@ -86,9 +86,11 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 
 - 로그는 콘솔(`podman logs`)과 `${LOG_PATH}`의 `cis.log`(INFO 이상)·`cis-error.log`(WARN 이상)로 나가며, 파일을 남기려면 `LOG_PATH`를 볼륨에 연결한다. 출력 구성은 `logback-spring.xml`, 형식·경로·롤링 값은 `application.yaml`의 `logging.*`다. 시각은 KST로 찍는다.
 - 로그 메시지는 영어로 쓴다(한글은 콘솔 인코딩에 따라 깨진다).
+- ERROR는 버그(처리하지 못한 예외)와 데이터 유실(버린 이력 쓰기, `DroppedWritesLog`)에만 쓴다. 외부 시스템의 일시 장애는 WARN이다.
 - 같은 대상이 반복해서 실패하는 곳(외부 시스템 호출, 주기 작업)은 매번 찍지 않고 `application.support.FailureLog`로 시작·지속(1분마다)·복구만 남긴다. `FixedDelayScheduler`는 틱 실패를 이미 이렇게 남긴다.
 - 외부 라이브러리의 반복 WARN·ERROR는 `RepeatedLogFilter`가 1분에 한 번으로 줄인다. 대상은 `logback-spring.xml`의 `loggerPrefix`이고, 시끄러운 INFO는 `logging.level`로 끈다(`org.apache.kafka`는 WARN).
 - Kafka 수신 상태(브로커 연결·파티션 할당·메시지 유무)는 `IngestWatchScheduler`가 판정해 남긴다. 리스너 id `ingest`는 스레드 이름과 client.id에 쓰이고, `idIsGroup = false`라 그룹은 `spring.kafka.consumer.group-id`를 따른다.
+- 실시간 푸시 경로(Redis 발행 → 구독 → STOMP)는 `PushWatchScheduler`가 `cis.push.published`와 `cis.push.forwarded`를 비교해 판정한다(`!test` 프로필에서만 뜬다).
 - 테스트에서 로그를 검증할 때는 `support.LogCapture`를 쓴다.
 
 ## 테스트 프로필 규칙

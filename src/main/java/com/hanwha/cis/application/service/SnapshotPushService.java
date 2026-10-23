@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.LongAdder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +37,7 @@ public class SnapshotPushService implements PushSnapshotsUseCase {
     private final Map<String, Boolean> lastOnline = new HashMap<>();
     /** offline으로 바뀐(감지한) 시각. 복귀 로그에 offline 지속 시간을 남기기 위함. */
     private final Map<String, Instant> offlineSince = new HashMap<>();
+    private final LongAdder published = new LongAdder();
 
     public SnapshotPushService(CraneStateRegistry registry, CraneStateStorePort store,
             SnapshotPublisherPort publisher, Clock clock, Duration staleThreshold) {
@@ -83,7 +85,13 @@ public class SnapshotPushService implements PushSnapshotsUseCase {
             registry.markDirty(ids);
             throw e;
         }
+        published.increment();
         return snapshots.size();
+    }
+
+    /** 발행한 메시지 수(틱당 스냅샷 묶음 1건). Micrometer 바인딩이 읽는다. */
+    public long published() {
+        return published.sum();
     }
 
     /** 한 틱의 online 전환을 모아 종류별로 한 줄씩 남긴다(Kafka가 끊기면 전 크레인이 한꺼번에 바뀌므로). */

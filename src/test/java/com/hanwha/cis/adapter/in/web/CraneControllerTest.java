@@ -17,6 +17,7 @@ import com.hanwha.cis.application.port.in.QueryCraneStateUseCase;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import com.hanwha.cis.domain.model.TagState;
 import com.hanwha.cis.domain.model.TagValue;
+import com.hanwha.cis.support.LogCapture;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -24,10 +25,12 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 @WebMvcTest({CraneController.class, CraneHistoryController.class})
 class CraneControllerTest {
@@ -102,6 +105,37 @@ class CraneControllerTest {
         assertThat(result).hasStatus(400).hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON);
         assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("Invalid query");
         assertThat(result).bodyJson().extractingPath("$.detail").isEqualTo("range must not exceed PT1H");
+    }
+
+    @Test
+    void databaseFailureIsProblemDetail503AndLoggedOnlyAtStartAndRecovery() {
+        Instant from = Instant.parse("2026-10-19T05:00:00Z");
+        Instant to = Instant.parse("2026-10-19T05:10:00Z");
+        given(historyQuery.changes("C_867", from, to, null, null))
+                .willThrow(new CannotCreateTransactionException("Could not open JPA EntityManager for transaction"))
+                .willThrow(new DataAccessResourceFailureException("Connection refused"))
+                .willReturn(new HistoryChanges(List.of(), null));
+
+        try (LogCapture logs = LogCapture.of(CraneHistoryController.class)) {
+            for (int i = 0; i < 2; i++) {
+                MvcTestResult result = mvc.get().uri("/api/cranes/C_867/changes")
+                        .param("from", from.toString()).param("to", to.toString())
+                        .exchange();
+
+                assertThat(result).hasStatus(503).hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON);
+                assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("History unavailable");
+            }
+            MvcTestResult recovered = mvc.get().uri("/api/cranes/C_867/changes")
+                    .param("from", from.toString()).param("to", to.toString())
+                    .exchange();
+
+            assertThat(recovered).hasStatusOk();
+            assertThat(logs.lines()).hasSize(2);
+            assertThat(logs.lines().get(0)).isEqualTo("WARN History query from DB failed:"
+                    + " CannotCreateTransactionException: Could not open JPA EntityManager for transaction");
+            assertThat(logs.lines().get(1)).startsWith("INFO History query from DB recovered after")
+                    .endsWith("(2 failures)");
+        }
     }
 
     @Test
