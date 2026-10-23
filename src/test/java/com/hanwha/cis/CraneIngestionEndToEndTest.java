@@ -203,6 +203,9 @@ class CraneIngestionEndToEndTest {
         assertThat(status(rest, "/api/cranes/C_867/history?from=" + future + "&to=" + future.plusSeconds(10))
                 .value()).isEqualTo(400);
 
+        // 컨테이너 헬스체크가 보는 liveness 프로브
+        assertThat(getJson(rest, "/actuator/health/liveness").get("status")).isEqualTo("UP");
+
         session.disconnect();
         stomp.stop();
     }

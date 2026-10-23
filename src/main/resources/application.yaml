@@ -22,6 +22,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # Redis는 없어도 되는 의존성이라 오래 기다리지 않는다(Lettuce 기본: 연결 10s, 명령 60s).
+      connect-timeout: 2s
+      timeout: 2s
       repositories:
         enabled: false
   mvc:
@@ -44,10 +47,18 @@ logging:
   level:
     # Kafka 클라이언트 INFO(설정 덤프, 재접속, 리밸런스)는 끈다. 수신 상태는 IngestWatchScheduler가 판정해 남긴다.
     org.apache.kafka: WARN
+    # Redis 재접속 시도마다 남는 "Reconnecting ..." INFO. 실패(WARN)와 복구(ReconnectionHandler INFO)는 남는다.
+    io.lettuce.core.protocol.ConnectionWatchdog: WARN
     # 30분마다 남기는 WebSocket 통계 한 줄. 세션 수는 요약 로그에 있다.
     org.springframework.web.socket.config.WebSocketMessageBrokerStats: WARN
 
 management:
+  endpoint:
+    health:
+      # /actuator/health/liveness·readiness 를 연다. 컨테이너 헬스체크는 liveness만 본다:
+      # 전체 /actuator/health 는 Redis가 없으면 DOWN인데, Redis는 없어도 되는 의존성이라 재시작 사유가 아니다.
+      probes:
+        enabled: true
   endpoints:
     web:
       exposure:

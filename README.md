@@ -71,7 +71,8 @@ com.hanwha.cis
 │   ├── out.redis     RedisCraneStateStore, RedisSnapshotPublisher
 │   └── out.persistence HistoryWriter(전용 쓰기 스레드), JPA 엔티티·리포지토리, 어댑터
 └── config            CisProperties(cis.*), ApplicationConfig, SchedulingConfig, KafkaConfig, RedisConfig, WebConfig, MetricsConfig,
-                      RepeatedLogFilter(logback 반복 억제), SkippedRecordLogger, StartupSummaryLogger
+                      RedisSubscriptionStarter(Redis 구독 백그라운드 재시도), RepeatedLogFilter(logback 반복 억제),
+                      SkippedRecordLogger, StartupSummaryLogger
 ```
 
 의존 방향(domain ← application ← adapter/config, 어댑터 간 의존 금지)은 `ArchitectureTest`(ArchUnit)가 강제합니다.
@@ -111,6 +112,27 @@ Git Bash, macOS, Linux에서는 `.\gradlew.bat` 대신 `./gradlew`를 사용합�
 
 그 밖의 동작 설정은 `application.yaml`의 `cis.*`에 있습니다(푸시·이력 주기, 큐 크기, stale 기준, 조회 상한, CORS 허용 오리진 등).
 
+### 컨테이너로 실행 (배포)
+
+서버도 컨테이너로 띄울 때는 compose의 `app` 프로필을 씁니다. 기본 `podman compose up -d`에는 서버가 포함되지 않아 `bootRun` 개발 방식과 겹치지 않습니다.
+
+```powershell
+podman compose --profile app up -d --build   # 이미지 빌드(Containerfile) + DB·Redis·서버
+podman compose --profile app ps              # app 이 healthy 인지 확인
+podman compose --profile app logs -f app     # 콘솔 로그
+```
+
+- `restart: unless-stopped`: DB 없이 기동하면 서버가 종료하므로(Flyway 검증) 재시작 정책으로 DB가 뜰 때까지 다시 띄웁니다. Redis는 없어도 뜹니다. Linux에서 재부팅 후에도 띄우려면 `podman-restart.service`를 켜 둡니다.
+- 헬스 체크는 `/actuator/health/liveness`만 봅니다. 전체 `/actuator/health`는 Redis가 없으면 DOWN이지만 Redis는 재시작 사유가 아니기 때문입니다.
+- 로그 파일은 `cis-logs` 볼륨의 `/app/logs`에 남습니다. 예: `podman compose --profile app exec app tail -n 100 /app/logs/cis-error.log`
+- Kafka는 브로커가 **광고하는 주소**로 붙어야 합니다. ISL Kafka는 호스트 쪽으로 `localhost:29092`, 컨테이너 쪽으로 `kafka:9092`(네트워크 `isl-infra`)를 광고하므로 서버 컨테이너는 `isl-infra`에 붙어 `kafka:9092`를 씁니다. 다른 환경이면 아래 변수로 바꿉니다.
+
+| 변수 (compose) | 기본값 | 의미 |
+|---|---|---|
+| `CIS_KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | 서버 컨테이너가 붙을 Kafka 주소 |
+| `CIS_KAFKA_NETWORK` | `isl-infra` | Kafka가 있는 외부 podman 네트워크(미리 있어야 함) |
+| `CIS_APP_PORT` | `8080` | 호스트에 여는 서버 포트 |
+
 ## API
 
 REST (`/api`, 오류는 RFC 9457 ProblemDetail):
@@ -146,13 +168,15 @@ WebSocket (STOMP, SockJS 없음):
 
 ```
 GET http://localhost:8080/actuator/health      # db, redis 인디케이터 포함
-GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.history.*, cis.ws.sessions, cis.cranes.*
+GET http://localhost:8080/actuator/health/liveness   # 프로세스 자체 상태(컨테이너 헬스 체크용, 외부 의존성 제외)
+GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.history.*, cis.ws.sessions, cis.cranes.*
 ```
 
 - 서버 로그에 60초마다 요약 한 줄이 찍힙니다(아래 [로그](#로그) 참고).
 - Redis: `podman exec cis-redis-1 redis-cli HLEN cis:crane:state` (크레인 수), `SUBSCRIBE cis:crane:snapshots`
 - DB: `psql -h localhost -U cis -d cis -c "select crane_id, count(*) from crane_history group by 1"`
-- DB(TimescaleDB)를 잠시 내려도 수집·푸시는 계속되고, 이력은 큐에 쌓였다가(`cis.history.queue_size`) 복구 후 빠집니다.
+- DB(TimescaleDB)를 잠시 내려도 수집·푸시는 계속되고, 이력은 큐에 쌓였다가(`cis.history.queue_size`) 복구 후 빠집니다. 단 기동할 때는 DB가 있어야 합니다(Flyway 검증).
+- Redis는 기동할 때 없어도 됩니다. 없는 동안 수집·이력·REST(메모리 상태)는 계속되고 화면 실시간 푸시만 멈추며, Redis가 붙으면 구독과 푸시가 자동으로 이어집니다.
 
 ## 로그
 
@@ -165,7 +189,7 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.history.*, ci
 | `${LOG_PATH}/cis-error.log` | WARN 이상만. 문제가 생기면 이 파일부터 봅니다 |
 
 - 파일은 날짜별·50MB 단위로 나눠 `.gz`로 보관하고 30일이 지나면 지웁니다. 용량 상한은 `cis.log` 1.5GB, `cis-error.log` 512MB입니다(`logging.logback.rollingpolicy.*`).
-- 컨테이너로 띄울 때는 `LOG_PATH`를 볼륨에 연결해야 컨테이너를 다시 만들어도 파일이 남습니다. 예: `podman run -e LOG_PATH=/var/log/cis -v cis-logs:/var/log/cis ...`
+- 컨테이너로 띄울 때는 `LOG_PATH`를 볼륨에 연결해야 컨테이너를 다시 만들어도 파일이 남습니다. compose `app` 서비스는 `cis-logs` 볼륨을 `/app/logs`에 연결해 둡니다.
 - `test` 프로필은 콘솔에만 찍습니다.
 - Kafka 클라이언트의 INFO 로그는 끄고, Kafka·Redis·DB 라이브러리의 같은 WARN·ERROR는 1분에 한 번만 남깁니다(`logback-spring.xml`).
 

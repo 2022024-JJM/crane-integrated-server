@@ -26,5 +26,46 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+  # 서버 자체. 기본 `podman compose up -d`에는 포함되지 않고 --profile app 일 때만 뜬다.
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/crane-integrated-server:latest
+    # DB가 없으면 기동에 실패해 종료하므로(Flyway 검증) 재시작 정책으로 다시 띄운다. Redis는 없어도 뜬다.
+    restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://timescaledb:5432/cis?reWriteBatchedInserts=true
+      REDIS_HOST: redis
+      # Kafka가 광고하는 주소로 붙어야 한다. ISL Kafka는 컨테이너 쪽으로 kafka:9092(isl-infra 네트워크)를 광고한다.
+      KAFKA_BOOTSTRAP_SERVERS: ${CIS_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      LOG_PATH: /app/logs
+    ports:
+      - "${CIS_APP_PORT:-8080}:8080"
+    volumes:
+      - cis-logs:/app/logs
+    networks:
+      - default
+      - kafka
+    healthcheck:
+      # liveness만 본다(Redis 장애로 unhealthy가 되지 않게). 이미지에 curl이 없을 수 있어 bash로 요청한다.
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health/liveness HTTP/1.0\r\n\r\n' >&3 && grep -q '"UP"' <&3
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+networks:
+  kafka:
+    external: true
+    name: ${CIS_KAFKA_NETWORK:-isl-infra}
 volumes:
   cis-pg: {}
+  cis-logs: {}
