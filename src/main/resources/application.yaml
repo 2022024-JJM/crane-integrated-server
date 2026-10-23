@@ -90,3 +90,5 @@ cis:
   web:
     allowed-origins:
       - "http://localhost:*"
+    # 이보다 오래 걸린 /api 요청만 WARN 한 줄로 남긴다(요청마다 남기는 access log는 없다).
+    slow-request-threshold: 1s

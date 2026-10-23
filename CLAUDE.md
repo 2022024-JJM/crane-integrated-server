@@ -87,6 +87,7 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 - 로그는 콘솔(`podman logs`)과 `${LOG_PATH}`의 `cis.log`(INFO 이상)·`cis-error.log`(WARN 이상)로 나가며, 파일을 남기려면 `LOG_PATH`를 볼륨에 연결한다. 출력 구성은 `logback-spring.xml`, 형식·경로·롤링 값은 `application.yaml`의 `logging.*`다. 시각은 KST로 찍는다.
 - 로그 메시지는 영어로 쓴다(한글은 콘솔 인코딩에 따라 깨진다).
 - ERROR는 버그(처리하지 못한 예외)와 데이터 유실(버린 이력 쓰기, `DroppedWritesLog`)에만 쓴다. 외부 시스템의 일시 장애는 WARN이다.
+- REST는 요청마다 남기지 않는다(access log 없음). `cis.web.slow-request-threshold` 이상 걸린 `/api/*` 요청만 `SlowRequestLogFilter`가 WARN으로 남긴다.
 - 같은 대상이 반복해서 실패하는 곳(외부 시스템 호출, 주기 작업)은 매번 찍지 않고 `application.support.FailureLog`로 시작·지속(1분마다)·복구만 남긴다. `FixedDelayScheduler`는 틱 실패를 이미 이렇게 남긴다.
 - 외부 라이브러리의 반복 WARN·ERROR는 `RepeatedLogFilter`가 1분에 한 번으로 줄인다. 대상은 `logback-spring.xml`의 `loggerPrefix`이고, 시끄러운 INFO는 `logging.level`로 끈다(`org.apache.kafka`는 WARN).
 - Kafka 수신 상태(브로커 연결·파티션 할당·메시지 유무)는 `IngestWatchScheduler`가 판정해 남긴다. 리스너 id `ingest`는 스레드 이름과 client.id에 쓰이고, `idIsGroup = false`라 그룹은 `spring.kafka.consumer.group-id`를 따른다.

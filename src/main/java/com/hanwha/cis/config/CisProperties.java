@@ -59,6 +59,7 @@ public record CisProperties(
     }
 
     public record Web(
-            @NotEmpty @DefaultValue("http://localhost:*") List<String> allowedOrigins) {
+            @NotEmpty @DefaultValue("http://localhost:*") List<String> allowedOrigins,
+            @NotNull @DurationMin(millis = 1) @DefaultValue("1s") Duration slowRequestThreshold) {
     }
 }

@@ -111,7 +111,7 @@ Git Bash, macOS, Linux에서는 `.\gradlew.bat` 대신 `./gradlew`를 사용합�
 | compose 포트 | 5432, 6379 | `CIS_DB_PORT`, `CIS_REDIS_PORT` |
 | 로그 파일 위치 | `./logs` (실행 위치 기준) | `LOG_PATH` |
 
-그 밖의 동작 설정은 `application.yaml`의 `cis.*`에 있습니다(푸시·이력 주기, 큐 크기, stale 기준, 조회 상한, CORS 허용 오리진 등).
+그 밖의 동작 설정은 `application.yaml`의 `cis.*`에 있습니다(푸시·이력 주기, 큐 크기, stale 기준, 조회 상한, CORS 허용 오리진, 느린 요청 기준 등).
 
 ### 컨테이너로 실행 (배포)
 
@@ -207,6 +207,7 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 | `Live push stalled: …` / `Live push resumed after …` | Redis 발행은 되는데 구독으로 돌아오지 않아 웹 화면이 갱신되지 않음. Redis 구독 상태 확인 |
 | `History writes dropped: N failed to write (time … ~ …), …` | 이력을 버렸음(ERROR, 1분마다). `time` 범위가 DB에 비는 구간 = 리플레이 공백 |
 | `History writes no longer dropped: …` | 이력 유실이 끝남(총 건수·기간) |
+| `Slow request: GET /api/… -> 200 in 2345 ms (remote …)` | 1초(`cis.web.slow-request-threshold`) 이상 걸린 REST 요청. 요청마다 남기는 access log는 없음 |
 | `… failed: …` → `… still failing for …` → `… recovered after …` | Redis·DB 등 연속 실패의 시작·지속(1분마다)·복구 |
 | `Kafka listener failed, record skipped: …` | 메시지 처리 중 예외(버그). 같은 원인은 1분에 한 건 |
 | `…: suppressed N repeat(s) of the following message in the last …` | 바로 다음 줄의 라이브러리 경고가 그동안 N번 더 났음 |
