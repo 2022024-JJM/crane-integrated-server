@@ -1,5 +1,5 @@
-# 서버 이미지. 로컬: docker compose --profile app up -d --build / 배포: docker build -t crane-integrated-server:<tag> .
-FROM eclipse-temurin:25-jdk AS build
+# 서버 이미지. 로컬: podman compose --profile app up -d --build / 배포: podman build -t crane-integrated-server:<tag> .
+FROM docker.io/library/eclipse-temurin:25-jdk AS build
 WORKDIR /src
 COPY gradlew settings.gradle build.gradle ./
 COPY gradle gradle
@@ -7,7 +7,7 @@ RUN chmod +x gradlew && ./gradlew --no-daemon --quiet dependencies > /dev/null
 COPY src src
 RUN ./gradlew --no-daemon --quiet bootJar
 
-FROM eclipse-temurin:25-jre
+FROM docker.io/library/eclipse-temurin:25-jre
 WORKDIR /app
 COPY --from=build /src/build/libs/*.jar app.jar
 ENV LOG_PATH=/app/logs

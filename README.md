@@ -91,11 +91,11 @@ com.hanwha.cis
 
 ## 시작하기
 
-JDK 25와 Docker(compose 포함)가 필요합니다.
+JDK 25와 Podman, docker-compose가 필요합니다. `podman compose`는 설치된 docker-compose를 찾아 실행합니다. Windows·macOS는 Podman이 VM에서 돌므로 처음 한 번 `podman machine init`, 부팅 뒤마다 `podman machine start`를 합니다.
 
 ```powershell
-docker compose up -d                     # 이 레포의 compose.yaml: timescaledb(5432) + redis(6379). .env 없이 그대로 쓴다
-docker compose ps                        # 둘 다 healthy 인지 확인
+podman compose up -d                     # 이 레포의 compose.yaml: timescaledb(5432) + redis(6379). .env 없이 그대로 쓴다
+podman compose ps                        # 둘 다 healthy 인지 확인
 .\gradlew.bat bootRun                    # 서버 실행 (8080)
 ```
 
@@ -115,38 +115,42 @@ Git Bash, macOS, Linux에서는 `.\gradlew.bat` 대신 `./gradlew`를 사용합�
 
 ### 컨테이너로 실행 (배포)
 
-로컬과 배포는 같은 `compose.yaml`을 쓰고, 차이는 `.env` 파일로만 둡니다. 로컬은 `.env` 없이 기본값(DB·Redis만)으로 동작하고, 배포 서버는 `.env.prod.example`을 `.env`로 복사해 채웁니다. `.env`의 `COMPOSE_PROFILES=app` 덕분에 그 뒤로는 `docker compose up -d`, `ps`, `logs`, `down`이 서버(`app`)를 포함합니다. 파일 이름은 정확히 `.env`여야 compose가 자동으로 읽습니다. `.prod`는 템플릿이 배포 값이라는 표시일 뿐입니다.
+로컬과 배포는 같은 `compose.yaml`을 쓰고, 차이는 `.env` 파일로만 둡니다. 로컬은 `.env` 없이 기본값(DB·Redis만)으로 동작하고, 배포 서버는 `.env.prod.example`을 `.env`로 복사해 채웁니다. `.env`의 `COMPOSE_PROFILES=app` 덕분에 그 뒤로는 `podman compose up -d`, `ps`, `logs`, `down`이 서버(`app`)를 포함합니다. 파일 이름은 정확히 `.env`여야 compose가 자동으로 읽습니다. `.prod`는 템플릿이 배포 값이라는 표시일 뿐입니다.
 
 ```bash
 cp .env.prod.example .env                          # 비밀번호·Kafka 주소·이미지 태그를 채운다(.env 는 git 에 올리지 않는다)
-docker build -t crane-integrated-server:latest .   # 이미지 빌드. 태그는 .env 의 CIS_APP_TAG 와 맞춘다(다른 곳에서 빌드했으면 docker save/load)
-docker compose up -d                               # DB·Redis·서버. 이미지가 없으면 여기서 빌드한다
-docker compose ps                                  # 셋 다 healthy 인지 확인
-docker compose logs -f app                         # 콘솔 로그
+podman build -t crane-integrated-server:latest .   # 이미지 빌드(Containerfile). localhost/crane-integrated-server:latest 로 저장된다
+                                                   # 태그는 .env 의 CIS_APP_TAG 와 맞춘다(다른 곳에서 빌드했으면 podman save/load)
+podman compose up -d                               # DB·Redis·서버. 이미지가 없으면 여기서 빌드한다
+podman compose ps                                  # 셋 다 healthy 인지 확인
+podman compose logs -f app                         # 콘솔 로그
 ```
 
-로컬에서 서버까지 컨테이너로 띄워 보려면 `.env` 없이 `docker compose --profile app up -d --build`를 씁니다. 서버 컨테이너가 붙는 외부 네트워크 `isl-infra`가 있어야 하므로 ISL Kafka가 떠 있어야 하고, bootRun과 포트 8080·Kafka 컨슈머 그룹이 겹치니 둘을 같이 띄우지 않습니다.
+처음 배포하는 서버는 먼저 [배포 서버 준비](#배포-서버-준비)를 합니다.
+
+로컬에서 서버까지 컨테이너로 띄워 보려면 `.env` 없이 `podman compose --profile app up -d --build`를 씁니다. 서버 컨테이너가 붙는 외부 네트워크 `isl-infra`가 있어야 하므로 ISL Kafka가 떠 있어야 하고, bootRun과 포트 8080·Kafka 컨슈머 그룹이 겹치니 둘을 같이 띄우지 않습니다.
 
 서비스는 각각 올리고 내릴 수 있습니다.
 
 ```bash
-docker compose stop app && docker compose up -d app    # 서버만 재기동. 이미지 태그를 바꿨으면 .env 수정 뒤 up -d app
-docker compose restart redis                           # Redis만 재시작. 서버는 떠 있는 채로 푸시만 잠깐 멈추고 자동 복구
-docker compose stop app                                # DB 작업 전에는 서버를 먼저 내린다(아래 참고)
-docker compose restart timescaledb && docker compose up -d app
-docker compose down app                                # 서버 컨테이너만 제거(DB·Redis 유지)
+podman compose stop app && podman compose up -d app    # 서버만 재기동. 이미지 태그를 바꿨으면 .env 수정 뒤 up -d app
+podman compose restart redis                           # Redis만 재시작. 서버는 떠 있는 채로 푸시만 잠깐 멈추고 자동 복구
+podman compose stop app                                # DB 작업 전에는 서버를 먼저 내린다(아래 참고)
+podman compose restart timescaledb && podman compose up -d app
+podman compose down app                                # 서버 컨테이너만 제거(DB·Redis 유지)
 ```
 
 - `up -d app`은 `depends_on` 때문에 DB도 같이 올립니다. DB 없이 서버만 올리려면 `--no-deps`를 붙입니다.
 - 서버가 떠 있는 채로 DB를 내리면 수집·푸시는 계속되지만, 이력 쓰기가 재시도 한도(연결 대기 30초 × 4회, 약 2분)를 넘기거나 큐(10,000건)가 차면 그 구간 이력은 버리고 ERROR로 남깁니다. 계획된 DB 작업은 서버를 먼저 내립니다.
-- `docker compose down -v`는 DB 데이터 볼륨(`cis-pg`)을 지우므로 배포 서버에서는 쓰지 않습니다.
-- 컨테이너 이름은 `cis-timescaledb`, `cis-redis`, `cis-app`으로 고정되어 있습니다. `docker logs -f cis-app`, `docker exec cis-redis redis-cli ping`처럼 compose 없이도 바로 지정할 수 있습니다.
-- 재시작 정책: 서버는 항상 `unless-stopped`입니다. DB 없이 기동하면 종료하므로(Flyway 검증) DB가 뜰 때까지 다시 띄우고, Redis는 없어도 뜹니다. DB·Redis는 `.env`의 `CIS_RESTART`로 정합니다. Docker 데몬이 재부팅 뒤 `unless-stopped` 컨테이너를 다시 띄우므로 별도 설정은 없습니다.
+- `podman compose down -v`는 DB 데이터 볼륨(`cis-pg`)을 지우므로 배포 서버에서는 쓰지 않습니다.
+- 컨테이너 이름은 `cis-timescaledb`, `cis-redis`, `cis-app`으로 고정되어 있습니다. `podman logs -f cis-app`, `podman exec cis-redis redis-cli ping`처럼 compose 없이도 바로 지정할 수 있습니다.
+- 재시작 정책: 서버는 항상 `unless-stopped`입니다. DB 없이 기동하면 종료하므로(Flyway 검증) DB가 뜰 때까지 다시 띄우고, Redis는 없어도 뜹니다. DB·Redis는 `.env`의 `CIS_RESTART`로 정합니다. Podman은 데몬이 없어서 재부팅 뒤 다시 띄우는 일은 `podman-restart.service`가 합니다([배포 서버 준비](#배포-서버-준비)).
 - 헬스 체크는 `/actuator/health/liveness`만 봅니다. 전체 `/actuator/health`는 Redis가 없으면 DOWN이지만 Redis는 재시작 사유가 아니기 때문입니다.
-- 서버 컨테이너는 `CIS_APP_MEMORY`(기본 1g)로 메모리를 제한하고 JVM 힙 최대치는 그 75%입니다. 콘솔 로그(json-file)는 서비스마다 10MB × 5개로 회전합니다.
-- 로그 파일은 `cis-logs` 볼륨의 `/app/logs`에 남습니다. 예: `docker compose exec app tail -n 100 /app/logs/cis-error.log`
-- DB·Redis 포트는 호스트 `127.0.0.1`에만 열립니다(Docker의 포트 공개는 호스트 방화벽을 우회하기 때문). 다른 호스트에서 DB에 붙어야 하면 SSH 터널을 씁니다.
-- Kafka는 브로커가 **광고하는 주소**로 붙어야 합니다. ISL Kafka는 호스트 쪽으로 `localhost:29092`, 컨테이너 쪽으로 `kafka:9092`(네트워크 `isl-infra`)를 광고하므로 서버 컨테이너는 `isl-infra`에 붙어 `kafka:9092`를 씁니다. 다른 환경이면 `.env`에서 바꿉니다.
+- 서버 컨테이너는 `CIS_APP_MEMORY`(기본 1g)로 메모리를 제한하고 JVM 힙 최대치는 그 75%입니다.
+- 콘솔 로그는 서비스마다 50MB까지 남습니다. Podman은 보관 개수(`max-file`)가 없어 상한에 닿으면 앞부분이 지워지므로, 지난 로그는 아래 로그 파일에서 봅니다.
+- 로그 파일은 `cis-logs` 볼륨의 `/app/logs`에 남습니다. 예: `podman compose exec app tail -n 100 /app/logs/cis-error.log`
+- DB·Redis 포트는 호스트 `127.0.0.1`에만 열립니다. 외부에 여는 포트는 서버(8080)뿐이고, 다른 호스트에서 DB에 붙어야 하면 SSH 터널을 씁니다.
+- Kafka는 브로커가 **광고하는 주소**로 붙어야 합니다. ISL Kafka는 호스트 쪽으로 `localhost:29092`, 컨테이너 쪽으로 `kafka:9092`(같은 서버·같은 계정 Podman의 네트워크 `isl-infra`)를 광고하므로 서버 컨테이너는 `isl-infra`에 붙어 `kafka:9092`를 씁니다. 다른 환경이면 `.env`에서 바꿉니다.
 
 `.env` 변수(모두 선택, 없으면 기본값 = 로컬 설정):
 
@@ -158,9 +162,28 @@ docker compose down app                                # 서버 컨테이너만 
 | `CIS_APP_TAG` | `latest` | 서버 이미지 태그. 롤백은 태그를 바꾸고 `up -d app` |
 | `CIS_APP_MEMORY` | `1g` | 서버 컨테이너 메모리 상한 |
 | `CIS_KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | 서버 컨테이너가 붙을 Kafka 주소 |
-| `CIS_KAFKA_NETWORK` | `isl-infra` | Kafka가 있는 외부 Docker 네트워크(미리 있어야 함) |
+| `CIS_KAFKA_NETWORK` | `isl-infra` | Kafka가 있는 외부 Podman 네트워크(ISL과 같은 계정에 미리 있어야 함) |
 | `CIS_DB_PORT`, `CIS_REDIS_PORT` | `5432`, `6379` | 호스트 127.0.0.1에 여는 DB·Redis 포트 |
 | `CIS_APP_PORT` | `8080` | 호스트에 여는 서버 포트 |
+
+### 배포 서버 준비
+
+배포 서버에서 한 번만 합니다. 명령은 모두 **ISL을 띄운 계정**으로 실행합니다. 서버 컨테이너가 ISL의 `isl-infra` 네트워크에 붙어야 하는데, Podman 네트워크는 계정마다(rootless), 그리고 rootful·rootless마다 따로 있기 때문입니다.
+
+```bash
+podman info --format '{{.Host.NetworkBackend}} {{.Host.CgroupsVersion}}'   # netavark v2 여야 한다
+podman compose version                           # compose 실행기. docker-compose v2 권장(podman-compose 면 최신 버전)
+podman network inspect isl-infra                 # ISL 네트워크가 있고 "dns_enabled": true 인지
+systemctl --user enable podman-restart.service   # 재부팅 뒤 컨테이너를 다시 띄운다(rootful 이면 sudo systemctl enable podman-restart.service)
+loginctl enable-linger $USER                     # rootless 만. 로그아웃해도 컨테이너와 헬스 체크가 계속 돈다
+```
+
+- `netavark`(Podman 4 이상)여야 서버 컨테이너가 두 네트워크(`cis_default`, `isl-infra`)에 같이 붙어 `timescaledb`·`redis`·`kafka`를 이름으로 찾습니다.
+- `podman-restart.service`가 없으면 재부팅 뒤 아무것도 뜨지 않습니다. 직접 `stop`한 컨테이너는 다시 띄우지 않습니다(`unless-stopped`). 재부팅 뒤 컨테이너가 뜨지 않으면(구버전 Podman) 재시작 정책을 `always`로 바꿉니다.
+- 헬스 체크는 systemd 타이머로 돕니다. rootless에서 linger가 없으면 로그아웃과 함께 멈추고, DB가 healthy가 되지 않아 서버가 뜨지 않습니다.
+- 메모리 상한은 cgroup `v2`여야 걸립니다. 안 걸리면 JVM 힙이 호스트 RAM 기준으로 잡히니 기동 뒤 `podman stats --no-stream cis-app`의 MEM LIMIT이 `CIS_APP_MEMORY`인지 봅니다.
+- rootless는 포트를 일반 프로세스로 열어 호스트 방화벽을 그대로 따릅니다. 외부에서 8080에 붙으려면 방화벽에서 엽니다.
+- 기존 DB 볼륨을 이어 쓰면 `CIS_DB_PASSWORD`를 그 볼륨을 만들 때의 비밀번호(`.env` 없이 만들었으면 `cis`)와 맞춥니다. 바꾸려면 먼저 `ALTER USER cis PASSWORD '…'`를 실행합니다.
 
 ## API
 
@@ -202,7 +225,7 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 ```
 
 - 서버 로그에 60초마다 요약 한 줄이 찍힙니다(아래 [로그](#로그) 참고).
-- Redis: `docker exec cis-redis redis-cli HLEN cis:crane:state` (크레인 수), `SUBSCRIBE cis:crane:snapshots`
+- Redis: `podman exec cis-redis redis-cli HLEN cis:crane:state` (크레인 수), `SUBSCRIBE cis:crane:snapshots`
 - DB: `psql -h localhost -U cis -d cis -c "select crane_id, count(*) from crane_history group by 1"`
 - DB(TimescaleDB)를 잠시 내려도 수집·푸시는 계속되고, 이력은 큐에 쌓였다가(`cis.history.queue_size`) 복구 후 빠집니다. 다만 쓰기 재시도 한도(연결 대기 30초 × 4회, 약 2분)를 넘긴 배치나 큐(10,000건)가 찬 뒤의 행은 버리고 ERROR로 남깁니다. 기동할 때는 DB가 있어야 합니다(Flyway 검증).
 - Redis는 기동할 때 없어도 됩니다. 없는 동안 수집·이력·REST(메모리 상태)는 계속되고 화면 실시간 푸시만 멈추며, Redis가 붙으면 구독과 푸시가 자동으로 이어집니다.
@@ -213,7 +236,7 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 
 | 출력 | 내용 |
 |---|---|
-| 콘솔(stdout) | INFO 이상. 컨테이너에서는 `docker compose logs app` |
+| 콘솔(stdout) | INFO 이상. 컨테이너에서는 `podman compose logs app` |
 | `${LOG_PATH}/cis.log` | INFO 이상 전부 |
 | `${LOG_PATH}/cis-error.log` | WARN 이상만. 문제가 생기면 이 파일부터 봅니다 |
 
