@@ -15,7 +15,8 @@ public class SchedulingConfig {
     public static final String HISTORY_SCHEDULER = "historyScheduler";
     public static final String SUMMARY_SCHEDULER = "summaryScheduler";
     public static final String WATCH_SCHEDULER = "watchScheduler";
-    public static final String PUSH_WATCH_SCHEDULER = "pushWatchScheduler";
+    // PushWatchScheduler 컴포넌트의 기본 빈 이름(pushWatchScheduler)과 겹치지 않게 한다.
+    public static final String PUSH_WATCH_SCHEDULER = "pushWatchTaskScheduler";
 
     @Bean(PUSH_SCHEDULER)
     ThreadPoolTaskScheduler pushScheduler() {

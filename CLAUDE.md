@@ -64,7 +64,7 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 ## 스레드 규칙
 
 - Kafka 리스너 스레드(파티션당 1개)는 메모리 상태(`CraneStateRegistry`)만 갱신한다. DB·Redis를 직접 호출하지 않는다.
-- 푸시(250ms)·이력(1s)·요약 로그(60s)·수신 감시(5s)·푸시 감시(5s)는 각각 `SchedulingConfig`의 전용 single-thread 스케줄러에서 돈다. 새 주기 작업은 `FixedDelayScheduler`를 상속해 만들고 전용 스케줄러 빈을 추가한다.
+- 푸시(250ms)·이력(1s)·요약 로그(60s)·수신 감시(5s)·푸시 감시(5s)는 각각 `SchedulingConfig`의 전용 single-thread 스케줄러에서 돈다. 새 주기 작업은 `FixedDelayScheduler`를 상속해 만들고 전용 스케줄러 빈을 추가한다. 스케줄러 빈 이름은 작업 컴포넌트의 기본 빈 이름(클래스 이름의 첫 글자를 소문자로)과 겹치면 안 된다(`PushWatchScheduler` ↔ `pushWatchTaskScheduler`). `!test` 컴포넌트면 테스트로는 드러나지 않고 실제 기동만 실패한다.
 - DB 쓰기는 `HistoryWriter` 스레드만 한다. 다른 스레드는 `enqueue`로 큐에 넣는다(큐가 차면 버리고 카운트).
 - STOMP 전송(`SimpMessagingTemplate`)은 Redis 구독 executor(`redis-sub-`)에서 한다.
 
