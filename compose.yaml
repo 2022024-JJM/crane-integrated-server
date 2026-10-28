@@ -1,8 +1,10 @@
 # 로컬·배포 공용. 환경 차이는 .env 로만 둔다(.env.prod.example). 로컬은 .env 없이 DB·Redis 만, 배포는 COMPOSE_PROFILES=app 으로 서버까지.
 # 서비스는 각각 올리고 내린다(stop app / up -d app / restart redis). `down -v` 는 DB 볼륨을 지우니 배포에서 금지.
+# Docker·Podman 공용(docker compose / podman compose). 두 엔진에서 똑같이 동작하는 키만 쓴다.
 name: cis
 
-# 모든 서비스의 콘솔 로그에 크기 상한을 둔다. Podman 은 json-file 을 k8s-file 로 받고 보관 개수(max-file)가 없다.
+# 모든 서비스의 콘솔 로그에 크기 상한을 둔다. Podman 은 json-file 을 k8s-file 로 받고 보관 개수(max-file)가 없어
+# 두지 않는다. Docker 도 max-file 기본값이 1 이라 동작이 같다(상한에 닿으면 지난 로그를 버린다).
 x-logging: &logging
   driver: json-file
   options:
@@ -48,11 +50,11 @@ services:
   # 프로필 app 일 때만 뜬다. 로컬 bootRun 과 포트·Kafka 컨슈머 그룹이 겹치지 않게.
   app:
     profiles: ["app"]
-    # 이미지가 없으면 빌드한다. 배포는 미리 빌드한 태그를 CIS_APP_TAG 로 고정.
+    # 이미지가 없으면 빌드한다(Dockerfile). 배포는 `compose build app` 으로 미리 빌드하고 태그를 CIS_APP_TAG 로 고정.
     build:
       context: .
-      dockerfile: Containerfile
-    # podman build -t crane-integrated-server:<tag> 로 만든 이미지는 localhost/ 가 붙는다.
+    # compose 가 이 이름으로 빌드하므로 두 엔진에서 같다. compose 밖에서 빌드할 때도 localhost/ 까지 적는다
+    # (Docker 는 짧은 이름을 docker.io/library/ 로 저장해 compose 가 찾지 못한다).
     image: localhost/crane-integrated-server:${CIS_APP_TAG:-latest}
     container_name: cis-app
     # DB 없이는 기동 실패로 종료하므로(Flyway) 재시작으로 다시 띄운다. Redis 는 없어도 뜬다.
@@ -65,7 +67,8 @@ services:
       DB_URL: jdbc:postgresql://timescaledb:5432/cis?reWriteBatchedInserts=true
       DB_PASSWORD: ${CIS_DB_PASSWORD:-cis}
       REDIS_HOST: redis
-      # 브로커가 광고하는 주소. ISL Kafka 는 같은 계정 Podman 의 isl-infra 네트워크 쪽으로 kafka:9092 를 광고한다.
+      # 브로커가 광고하는 주소. ISL Kafka 는 isl-infra 네트워크 쪽으로 kafka:9092 를 광고한다.
+      # 네트워크는 엔진마다(Podman 은 계정마다) 따로라 ISL 과 같은 엔진에서 띄운다.
       KAFKA_BOOTSTRAP_SERVERS: ${CIS_KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
       LOG_PATH: /app/logs
     ports:
@@ -78,7 +81,7 @@ services:
     deploy:
       resources:
         limits:
-          # JVM 힙은 이 값의 75%(Containerfile).
+          # JVM 힙은 이 값의 75%(Dockerfile).
           memory: ${CIS_APP_MEMORY:-1g}
     healthcheck:
       # liveness 만 본다(Redis 장애로 unhealthy 가 되지 않게). curl 이 없어 bash 로 요청.

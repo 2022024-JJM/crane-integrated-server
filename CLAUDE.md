@@ -30,8 +30,10 @@ Windows 환경이다. PowerShell에서는 `.\gradlew.bat`, Git Bash에서는 `./
 
 ```powershell
 podman compose up -d                          # 개발용 인프라: DB + Redis (bootRun과 함께 씀). .env 없이 기본값으로 뜬다
-podman compose --profile app up -d --build    # 서버까지 컨테이너로 (Containerfile 빌드). 배포 서버는 .env 의 COMPOSE_PROFILES=app 이라 --profile 생략
+podman compose --profile app up -d --build    # 서버까지 컨테이너로 (Dockerfile 빌드). 배포 서버는 .env 의 COMPOSE_PROFILES=app 이라 --profile 생략
 ```
+
+Docker에서는 `podman`을 `docker`로 바꿔 쓴다(`docker compose up -d`). 어느 엔진을 쓸지는 아래 배포 규칙을 따른다.
 
 린트/포맷터는 설정되어 있지 않다.
 
@@ -77,20 +79,22 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 
 ## 배포 규칙
 
-- 배포는 컨테이너(Podman)다. 이미지는 `Containerfile`(멀티 스테이지, bootJar), 실행은 compose `app` 서비스다. `app`은 프로필 `app`으로 묶여 `.env` 없는 기본 `up`에는 뜨지 않는다(bootRun과 포트·Kafka 컨슈머 그룹이 겹치지 않게). 배포 `.env`의 `COMPOSE_PROFILES=app`이 스위치다.
+- 배포는 컨테이너다. 엔진은 Docker와 Podman을 둘 다 지원하고, app은 ISL Kafka와 같은 엔진(Podman은 같은 계정)에 띄운다. 엔진별 절차는 `docs/deploy-docker.md`·`docs/deploy-podman.md`이고, 엔진마다 다른 운영 절차가 생기면 두 문서와 README "컨테이너 엔진" 표에 같이 적는다.
+- `compose.yaml`·`Dockerfile`에는 두 엔진에서 똑같이 동작하는 것만 쓴다. 한쪽에만 있는 키·옵션(Docker의 로그 `max-file`, Podman의 `x-podman`·`userns_mode: keep-id` 등)은 넣지 않는다. 이미지 정의 파일 이름이 `Dockerfile`인 것도 이 때문이다(Podman은 `Containerfile` 다음으로 `Dockerfile`을 찾고 Docker는 `Dockerfile`만 찾는다).
+- 이미지는 `Dockerfile`(멀티 스테이지, bootJar), 실행은 compose `app` 서비스다. `app`은 프로필 `app`으로 묶여 `.env` 없는 기본 `up`에는 뜨지 않는다(bootRun과 포트·Kafka 컨슈머 그룹이 겹치지 않게). 배포 `.env`의 `COMPOSE_PROFILES=app`이 스위치다.
 - 로컬과 배포는 `compose.yaml` 하나를 쓰고 차이는 `.env`로만 둔다. compose의 `${CIS_X:-기본값}` 기본값이 로컬 설정이고, 배포는 `.env.prod.example`을 `.env`로 복사해 채운다(`COMPOSE_PROFILES=app`, `CIS_RESTART`, `CIS_DB_PASSWORD`, `CIS_APP_TAG` 등). 파일 이름은 정확히 `.env`여야 compose가 자동으로 읽는다. 환경별 compose 파일이나 override 파일은 만들지 않는다. 환경 차이가 새로 생기면 변수로 넣고 `.env.prod.example`과 README 표에 같이 적는다.
 - 서비스(timescaledb·redis·app)는 각각 올리고 내린다(`podman compose stop app`, `up -d app`, `restart redis`, `down app`). `depends_on`은 첫 기동 순서용으로만 둔다. 계획된 DB 작업은 app을 먼저 내린다(이력 쓰기 재시도 한도를 넘기면 유실). `down -v`는 DB 볼륨을 지우므로 배포 서버에서 쓰지 않는다.
 - 컨테이너 이름은 `container_name`으로 `cis-<서비스>`에 고정한다(`cis-timescaledb`, `cis-redis`, `cis-app`). 자동 생성 이름(`cis-redis-1`)에 의존하는 명령이나 문서를 쓰지 않고, 서비스를 추가하면 같은 규칙으로 이름을 준다.
-- 재시작 정책은 app이 `unless-stopped`, DB·Redis는 `CIS_RESTART`(로컬 `no`, 배포 `unless-stopped`)다. DB가 없으면 기동에 실패해 종료하고 재시작으로 다시 뜬다. Podman은 데몬이 없어 재부팅 뒤 재기동은 `podman-restart.service`가 한다(README "배포 서버 준비").
-- 이미지는 레지스트리까지 적은 이름(`docker.io/...`)으로 쓴다. 짧은 이름은 검색 레지스트리가 여럿인 서버에서 모호해진다. 서버 이미지는 `localhost/crane-integrated-server`다.
+- 재시작 정책은 app이 `unless-stopped`, DB·Redis는 `CIS_RESTART`(로컬 `no`, 배포 `unless-stopped`)다. DB가 없으면 기동에 실패해 종료하고 재시작으로 다시 뜬다. 재부팅 뒤 재기동은 Docker는 데몬이, Podman은 데몬이 없어 `podman-restart.service`가 한다(엔진별 가이드).
+- 이미지는 레지스트리까지 적은 이름(`docker.io/...`)으로 쓴다. 짧은 이름은 검색 레지스트리가 여럿인 서버에서 모호해진다. 서버 이미지는 `localhost/crane-integrated-server`이고 `compose build app`으로 빌드해 이름·태그(`CIS_APP_TAG`)를 compose가 붙이게 한다. 짧은 이름(`docker build -t crane-integrated-server`)은 Docker가 `docker.io/library/`로 저장해 compose가 찾지 못한다.
 - DB·Redis 포트는 호스트 `127.0.0.1`에만 묶는다. 외부에 여는 포트는 app만이다.
 - 헬스 체크는 `/actuator/health/liveness`만 본다. liveness에 외부 의존성(Redis·DB·Kafka)을 넣지 않는다.
-- 서버 컨테이너는 Kafka가 광고하는 주소로 붙어야 한다. ISL Kafka는 컨테이너 쪽으로 `kafka:9092`(네트워크 `isl-infra`)를 광고하므로 `app`은 그 외부 네트워크에 붙는다(`CIS_KAFKA_BOOTSTRAP_SERVERS`, `CIS_KAFKA_NETWORK`). Podman 네트워크는 계정·rootful/rootless마다 따로라서 ISL과 같은 서버·같은 계정의 Podman에서 띄운다.
-- 컨테이너 콘솔 로그는 json-file 드라이버(Podman에서는 k8s-file)에 크기 상한(`x-logging` 앵커)을 건다. Podman은 `max-file`이 없어 `max-size`만 둔다. 서비스를 추가하면 `logging: *logging`을 붙인다. app은 `CIS_APP_MEMORY`로 메모리를 제한하고 JVM 힙은 `-XX:MaxRAMPercentage=75`(Containerfile)로 따라간다.
+- 서버 컨테이너는 Kafka가 광고하는 주소로 붙어야 한다. ISL Kafka는 컨테이너 쪽으로 `kafka:9092`(네트워크 `isl-infra`)를 광고하므로 `app`은 그 외부 네트워크에 붙는다(`CIS_KAFKA_BOOTSTRAP_SERVERS`, `CIS_KAFKA_NETWORK`). 네트워크는 엔진마다(Podman은 계정·rootful/rootless마다) 따로라서 ISL과 같은 서버·같은 엔진(Podman은 같은 계정)에서 띄운다.
+- 컨테이너 콘솔 로그는 json-file 드라이버(Podman에서는 k8s-file)에 크기 상한(`x-logging` 앵커)을 건다. Podman은 `max-file`이 없어 `max-size`만 둔다(Docker도 기본값 1이라 동작이 같다). 서비스를 추가하면 `logging: *logging`을 붙인다. app은 `CIS_APP_MEMORY`로 메모리를 제한하고 JVM 힙은 `-XX:MaxRAMPercentage=75`(Dockerfile)로 따라간다.
 
 ## 로그 규칙
 
-- 로그는 콘솔(`podman compose logs`)과 `${LOG_PATH}`의 `cis.log`(INFO 이상)·`cis-error.log`(WARN 이상)로 나가며, 파일을 남기려면 `LOG_PATH`를 볼륨에 연결한다. 출력 구성은 `logback-spring.xml`, 형식·경로·롤링 값은 `application.yaml`의 `logging.*`다. 시각은 KST로 찍는다.
+- 로그는 콘솔(`compose logs`)과 `${LOG_PATH}`의 `cis.log`(INFO 이상)·`cis-error.log`(WARN 이상)로 나가며, 파일을 남기려면 `LOG_PATH`를 볼륨에 연결한다. 출력 구성은 `logback-spring.xml`, 형식·경로·롤링 값은 `application.yaml`의 `logging.*`다. 시각은 KST로 찍는다.
 - 로그 메시지는 영어로 쓴다(한글은 콘솔 인코딩에 따라 깨진다).
 - ERROR는 버그(처리하지 못한 예외)와 데이터 유실(버린 이력 쓰기, `DroppedWritesLog`)에만 쓴다. 외부 시스템의 일시 장애는 WARN이다.
 - REST는 요청마다 남기지 않는다(access log 없음). `cis.web.slow-request-threshold` 이상 걸린 `/api/*` 요청만 `SlowRequestLogFilter`가 WARN으로 남긴다.

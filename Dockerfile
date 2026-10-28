@@ -1,4 +1,5 @@
-# 서버 이미지. 로컬: podman compose --profile app up -d --build / 배포: podman build -t crane-integrated-server:<tag> .
+# 서버 이미지. Docker·Podman 공용(Podman 은 Containerfile 다음으로 Dockerfile 을 찾는다).
+# 로컬: <docker|podman> compose --profile app up -d --build / 배포: <docker|podman> compose build app
 FROM docker.io/library/eclipse-temurin:25-jdk AS build
 WORKDIR /src
 COPY gradlew settings.gradle build.gradle ./
