@@ -5,13 +5,13 @@ import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * 토픽을 구독해 JSON을 {@link KafkaRawEvent}로 읽고 유스케이스에 넘긴다. 파티션(=크레인)당 스레드 1개.
+ * 내업(indoor) 토픽을 구독해 JSON을 {@link KafkaRawEvent}로 읽고 유스케이스에 넘긴다. 파티션(=크레인)당 스레드 1개.
  * 이 스레드는 메모리 상태만 만지고 DB·Redis는 호출하지 않는다. 예외는 삼키지 않고 컨테이너 에러 핸들러에 맡긴다.
  * 리스너 id는 스레드 이름(ingest-0-C-1)과 Kafka client.id(ingest-0)에 쓰인다. 그룹은 spring.kafka.consumer.group-id를 따른다.
+ * 외업은 {@link OutdoorCraneEventKafkaListener}.
  */
 @Component
 public class CraneEventKafkaListener {
@@ -29,24 +29,11 @@ public class CraneEventKafkaListener {
     @KafkaListener(id = LISTENER_ID, idIsGroup = false, clientIdPrefix = LISTENER_ID,
             topics = "${cis.kafka.topic}", concurrency = "${cis.kafka.concurrency}")
     public void onMessage(ConsumerRecord<String, String> record) {
-        String payload = record.value();
-        if (payload == null) {
-            ingest.skipUnparseable(record.key(), null);
+        RawTagEvent event = KafkaRawEvent.toRawTagEvent(record, json);
+        if (event == null) {
+            ingest.skipUnparseable(record.key(), record.value());
             return;
         }
-        KafkaRawEvent event;
-        try {
-            event = json.readValue(payload, KafkaRawEvent.class);
-        } catch (JacksonException e) {
-            ingest.skipUnparseable(record.key(), payload);
-            return;
-        }
-        if (event == null || event.payload() == null) {
-            ingest.skipUnparseable(record.key(), payload);
-            return;
-        }
-        KafkaRawEvent.Payload p = event.payload();
-        ingest.ingest(new RawTagEvent(record.key(), event.stationId(), event.craneId(), event.occurredAt(),
-                p.tagKey(), p.value(), p.quality()));
+        ingest.ingest(event);
     }
 }

@@ -68,6 +68,8 @@ cis:
   kafka:
     topic: ocean.crane.indoor.event
     concurrency: 3
+    # 외업. 레코드 키가 PLC 장비 이름 하나라 파티션 하나에만 들어오므로 리스너 스레드는 1개다.
+    outdoor-topic: ocean.crane.outdoor.event
   push:
     interval: 250ms
   history:

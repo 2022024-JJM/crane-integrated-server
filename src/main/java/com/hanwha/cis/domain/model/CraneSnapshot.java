@@ -10,6 +10,7 @@ import java.util.TreeMap;
 /**
  * 크레인 1대의 특정 시점 전체 상태(불변). Redis 해시 값, WebSocket 메시지, 이력 행의 state JSON이 모두 이 형태다.
  *
+ * @param scope          indoor/outdoor. scope가 없는 옛 JSON(Redis·이력)은 indoor로 읽는다
  * @param snapshotAt     마지막으로 반영된 데이터 시각(occurredAt). 태그를 하나도 받지 못했으면 null
  * @param lastReceivedAt 마지막 수신 벽시계 시각
  * @param online         staleThreshold 안에 수신이 있었는지
@@ -17,6 +18,7 @@ import java.util.TreeMap;
  */
 public record CraneSnapshot(
         String craneId,
+        CraneScope scope,
         String stationId,
         String bay,
         Instant snapshotAt,
@@ -26,6 +28,7 @@ public record CraneSnapshot(
 
     public CraneSnapshot {
         Objects.requireNonNull(craneId, "craneId");
+        scope = scope == null ? CraneScope.INDOOR : scope;
         tags = Collections.unmodifiableMap(new TreeMap<>(tags == null ? Map.of() : tags));
     }
 

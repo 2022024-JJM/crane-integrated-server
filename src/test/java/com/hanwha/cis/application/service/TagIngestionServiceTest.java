@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.IngestOutcome;
 import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
 import com.hanwha.cis.application.service.IngestStats.SkipReason;
+import com.hanwha.cis.domain.model.CraneScope;
+import com.hanwha.cis.domain.model.TagValue;
 import com.hanwha.cis.support.InMemoryCraneStateStore;
 import com.hanwha.cis.support.MutableClock;
 import java.time.Duration;
@@ -17,7 +19,7 @@ class TagIngestionServiceTest {
 
     private final MutableClock clock = new MutableClock(T0);
     private final CraneStateRegistry registry = new CraneStateRegistry(new InMemoryCraneStateStore());
-    private final IngestStats stats = new IngestStats();
+    private final IngestStats stats = new IngestStats(CraneScope.INDOOR);
     private final TagIngestionService service = new TagIngestionService(registry, stats, clock);
 
     private static RawTagEvent event(String key, String craneId, String tagKey, Object value, long at) {
@@ -72,6 +74,19 @@ class TagIngestionServiceTest {
                 .isEqualTo(IngestOutcome.SKIPPED);
         assertThat(stats.skipped(SkipReason.PARSE)).isEqualTo(3);
         assertThat(stats.received()).isEqualTo(3);
+    }
+
+    @Test
+    void keepsNullValuesAsNullAndCountsThem() {
+        assertThat(service.ingest(event("C_867", "C_867", "F5_1_Bay.C_867.tl_status", null, 1L)))
+                .isEqualTo(IngestOutcome.CHANGED);
+        assertThat(service.ingest(event("C_867", "C_867", "F5_1_Bay.C_867.height", "NULL", 1L)))
+                .isEqualTo(IngestOutcome.CHANGED);
+
+        assertThat(stats.nulls()).isEqualTo(2);
+        assertThat(stats.skippedTotal()).isZero();
+        assertThat(registry.find("C_867").orElseThrow().snapshot(T0, Duration.ofSeconds(30)).tags().get("height")
+                .value()).isEqualTo(TagValue.NULL);
     }
 
     @Test

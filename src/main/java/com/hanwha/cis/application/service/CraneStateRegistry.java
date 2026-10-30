@@ -3,6 +3,7 @@ package com.hanwha.cis.application.service;
 import com.hanwha.cis.application.port.out.CraneStateStorePort;
 import com.hanwha.cis.application.support.FailureLog;
 import com.hanwha.cis.domain.model.ApplyResult;
+import com.hanwha.cis.domain.model.CraneScope;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import com.hanwha.cis.domain.model.CraneState;
 import com.hanwha.cis.domain.model.TagReading;
@@ -56,12 +57,20 @@ public class CraneStateRegistry {
     }
 
     public ApplyResult apply(TagReading reading, Instant receivedAt) {
-        CraneState state = states.computeIfAbsent(reading.tagKey().craneId(), CraneState::of);
+        CraneState state = states.computeIfAbsent(reading.tagKey().craneId(),
+                craneId -> CraneState.of(craneId, reading.scope()));
         ApplyResult result = state.apply(reading, receivedAt);
         if (result == ApplyResult.CHANGED) {
             dirty.add(state.craneId());
         }
         return result;
+    }
+
+    /** 크레인의 태그를 이 값들로 통째로 바꾸고 푸시 대상으로 표시한다({@link CraneState#replaceTags}). */
+    public void replaceTags(String craneId, CraneScope scope, List<TagReading> readings, Instant receivedAt) {
+        CraneState state = states.computeIfAbsent(craneId, id -> CraneState.of(id, scope));
+        state.replaceTags(readings, receivedAt);
+        dirty.add(craneId);
     }
 
     /** dirty 집합을 비우며 그 내용을 돌려준다. 비운 뒤 들어온 변경은 다음 호출에 잡힌다. */
@@ -96,9 +105,10 @@ public class CraneStateRegistry {
         return states.values().stream().filter(s -> s.isOnline(now, staleThreshold)).count();
     }
 
-    /** craneId순 스냅샷(태그를 하나라도 받은 크레인만). */
-    public List<CraneSnapshot> snapshots(Instant now, Duration staleThreshold) {
+    /** 이 scope의 craneId순 스냅샷(태그를 하나라도 받은 크레인만). */
+    public List<CraneSnapshot> snapshots(CraneScope scope, Instant now, Duration staleThreshold) {
         return states.values().stream()
+                .filter(s -> s.scope() == scope)
                 .map(s -> s.snapshot(now, staleThreshold))
                 .filter(s -> s.snapshotAt() != null)
                 .sorted(Comparator.comparing(CraneSnapshot::craneId))

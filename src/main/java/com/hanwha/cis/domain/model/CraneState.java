@@ -3,6 +3,7 @@ package com.hanwha.cis.domain.model;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -13,6 +14,7 @@ import java.util.Objects;
 public final class CraneState {
 
     private final String craneId;
+    private final CraneScope scope;
     private String stationId;
     private String bay;
     private final Map<String, TagState> tags = new HashMap<>();
@@ -21,17 +23,18 @@ public final class CraneState {
     /** 마지막으로 수신한 벽시계 시각. 30초 stale 판정 기준. */
     private Instant lastReceivedAt;
 
-    private CraneState(String craneId) {
+    private CraneState(String craneId, CraneScope scope) {
         this.craneId = Objects.requireNonNull(craneId, "craneId");
+        this.scope = Objects.requireNonNull(scope, "scope");
     }
 
-    public static CraneState of(String craneId) {
-        return new CraneState(craneId);
+    public static CraneState of(String craneId, CraneScope scope) {
+        return new CraneState(craneId, scope);
     }
 
     /** Redis 등에 저장된 스냅샷에서 복원한다(재시작 직후 "모든 태그 변경" 오판 방지). */
     public static CraneState fromSnapshot(CraneSnapshot snapshot) {
-        CraneState state = new CraneState(snapshot.craneId());
+        CraneState state = new CraneState(snapshot.craneId(), snapshot.scope());
         state.stationId = snapshot.stationId();
         state.bay = snapshot.bay();
         state.snapshotAt = snapshot.snapshotAt();
@@ -44,6 +47,10 @@ public final class CraneState {
         return craneId;
     }
 
+    public CraneScope scope() {
+        return scope;
+    }
+
     /**
      * 태그 1건을 반영한다.
      *
@@ -54,6 +61,10 @@ public final class CraneState {
         if (!craneId.equals(reading.tagKey().craneId())) {
             throw new IllegalArgumentException(
                     "reading for " + reading.tagKey().craneId() + " applied to " + craneId);
+        }
+        if (scope != reading.scope()) {
+            throw new IllegalArgumentException(
+                    reading.scope().id() + " reading applied to " + scope.id() + " crane " + craneId);
         }
         String tagName = reading.tagKey().tagName();
         TagState previous = tags.get(tagName);
@@ -73,6 +84,17 @@ public final class CraneState {
         return changed ? ApplyResult.CHANGED : ApplyResult.UNCHANGED;
     }
 
+    /**
+     * 태그 전부를 이 값들로 바꾼다(이전 태그는 지운다). 외업 크레인이 다른 슬롯으로 옮겨 태그 이름이 바뀔 때 쓴다.
+     * 한 번에 바꾸므로 스냅샷에 빈 태그나 두 슬롯의 태그가 섞여 보이지 않는다.
+     */
+    public synchronized void replaceTags(List<TagReading> readings, Instant receivedAt) {
+        tags.clear();
+        for (TagReading reading : readings) {
+            apply(reading, receivedAt);
+        }
+    }
+
     public synchronized boolean isOnline(Instant now, Duration staleThreshold) {
         return lastReceivedAt != null && !lastReceivedAt.plus(staleThreshold).isBefore(now);
     }
@@ -82,7 +104,7 @@ public final class CraneState {
     }
 
     public synchronized CraneSnapshot snapshot(Instant now, Duration staleThreshold) {
-        return new CraneSnapshot(craneId, stationId, bay, snapshotAt, lastReceivedAt,
+        return new CraneSnapshot(craneId, scope, stationId, bay, snapshotAt, lastReceivedAt,
                 isOnline(now, staleThreshold), tags);
     }
 }

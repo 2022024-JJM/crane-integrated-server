@@ -3,6 +3,7 @@ package com.hanwha.cis.application.service;
 import com.hanwha.cis.application.port.in.IngestTagReadingUseCase;
 import com.hanwha.cis.application.service.IngestStats.SkipReason;
 import com.hanwha.cis.domain.model.ApplyResult;
+import com.hanwha.cis.domain.model.CraneScope;
 import com.hanwha.cis.domain.model.TagKey;
 import com.hanwha.cis.domain.model.TagReading;
 import com.hanwha.cis.domain.model.TagValue;
@@ -13,7 +14,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** 원시 이벤트를 검증·정규화해 메모리 상태에 반영하고 카운터를 센다. 문제 메시지는 건너뛰되 분당 일정 건수만 로그에 남긴다. */
+/**
+ * 내업(indoor) 원시 이벤트를 검증·정규화해 메모리 상태에 반영하고 카운터를 센다. 문제 메시지는 건너뛰되 분당 일정 건수만 로그에 남긴다.
+ * 외업은 {@link OutdoorTagIngestionService}.
+ */
 public class TagIngestionService implements IngestTagReadingUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(TagIngestionService.class);
@@ -57,8 +61,11 @@ public class TagIngestionService implements IngestTagReadingUseCase {
         } catch (IllegalArgumentException e) {
             return skip(SkipReason.PARSE, e.getMessage(), event);
         }
+        if (value instanceof TagValue.NullValue) {
+            stats.onNull();
+        }
         int quality = event.quality() == null ? 0 : event.quality();
-        TagReading reading = new TagReading(event.stationId(), tagKey, value, quality,
+        TagReading reading = new TagReading(CraneScope.INDOOR, event.stationId(), tagKey, value, quality,
                 Instant.ofEpochMilli(event.occurredAt()));
 
         ApplyResult result = registry.apply(reading, clock.instant());

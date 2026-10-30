@@ -38,36 +38,53 @@ flowchart LR
 
 이 저장소는 ④에 해당합니다. 크레인 값은 Node-RED 크레인 시뮬레이터가 만들어 MQTT로 발행하고, 수집과 Kafka 적재는 IntersysLink v4의 MQTT Agent가 담당하며, 이 서버는 토픽을 구독만 합니다.
 
+토픽은 내업(indoor) `ocean.crane.indoor.event`와 외업(outdoor) `ocean.crane.outdoor.event` 두 개입니다. 둘은 같은 메모리 상태·Redis·이력 테이블을 쓰고, 화면으로 나가는 REST·STOMP 경로만 나뉩니다(스냅샷의 `scope`).
+
 서버 안의 흐름은 다음과 같습니다.
 
 ```
-Kafka ─▶ KafkaListener ─▶ TagIngestionService ─▶ 메모리 상태(크레인별, 변경 감지)
+indoor  ─▶ CraneEventKafkaListener        ─▶ TagIngestionService        ─┐
+outdoor ─▶ OutdoorCraneEventKafkaListener ─▶ OutdoorTagIngestionService ─┴▶ 메모리 상태(크레인별, 변경 감지)
                                                        │ 변한 크레인
-   250ms ─▶ SnapshotPushService ──▶ Redis HASH cis:crane:state ──▶ REST 조회
-                                 └▶ Redis PUBLISH cis:crane:snapshots ─▶ 구독 ─▶ STOMP /topic/cranes, /topic/cranes/{id}
+   250ms ─▶ SnapshotPushService ──▶ Redis HASH cis:crane:state ──▶ REST 조회 /api/cranes, /api/outdoor/cranes
+                                 └▶ Redis PUBLISH cis:crane:snapshots ─▶ 구독 ─▶ STOMP /topic/cranes, /topic/outdoor/cranes
    1s    ─▶ HistoryRecordingService ─▶ HistoryWriter 큐 ─▶ 배치 INSERT crane_history / crane_history_diff
 ```
 
-- 메시지는 태그 1개 단위 JSON입니다. `TagKey`는 `{bay}.{craneId}.{tagName}`, `Value`는 boolean 또는 숫자입니다.
+- 메시지는 태그 1개 단위 JSON입니다. 내업은 `TagKey`가 `{bay}.{craneId}.{tagName}`입니다. `Value`는 boolean, 숫자, 또는 값 없음(JSON `null`, 문자열 `"NULL"`)이고 값 없음은 스냅샷에 `null`로 들어갑니다.
 - 값이 바뀐 크레인만 250ms 주기로 Redis에 저장·발행하고, WebSocket은 Redis 채널을 구독해 브라우저로 밀어 줍니다.
 - 30초 동안 수신이 없는 크레인은 `online=false`로 표시합니다.
 - 이력은 크레인당 1초마다 전체 상태 행(`crane_history`)과, 상태가 바뀐 시점의 전체 상태 행(`crane_history_diff`)을 TimescaleDB 하이퍼테이블에 저장합니다(30일 보존, 1일 경과분 압축).
+
+### 외업(outdoor) 크레인 해석
+
+외업 메시지는 크레인 1대가 아니라 외업 PLC 1대가 보냅니다. 레코드 키와 봉투 `craneId`는 PLC 장비 이름이고, 그 안에 크레인 슬롯 30개(`CR01`~`CR30`)와 공통 블록이 들어 있습니다. 서버는 이 구조만 크레인 단위로 바꾸고, 태그 이름과 값은 원본 그대로 둡니다.
+
+- 슬롯 태그는 `4_Crane.4_CR{nn}.`으로 시작합니다. 슬롯의 `4_Crane.4_CR{nn}.00_Crane_ID_{n}` 값이 그 슬롯에 들어 있는 크레인입니다.
+- Crane_ID 숫자는 백의 자리(4자리면 천의 자리)로 타입을 정해 craneId로 바꿉니다: 101 → `GC_01`, 207 → `TTC_07`, 348 → `TC_48`, 3104 → `TC_104`, 417 → `OC_17`, 452 → `CC_52`, 501 → `LLC_01`. 0은 미배정이고, 규칙 밖 숫자는 `ID_{숫자}`로 두고 WARN을 남깁니다.
+- 크레인 스냅샷의 태그는 그 슬롯의 원본 TagKey 그대로입니다(예: `4_Crane.4_CR01.4_POS.03_Center_POS_x1`). `bay`는 PLC 장비 이름입니다.
+- 슬롯마다 태그의 최근 값을 보관합니다. Crane_ID가 바뀌면 새 크레인의 태그를 슬롯 보관값으로 통째로 바꿉니다(이전 슬롯 이름의 태그는 지움). 슬롯에서 빠진 크레인은 갱신이 멈춰 30초 뒤 offline이 됩니다.
+- 같은 Crane_ID가 두 슬롯에 오면 먼저 잡은 슬롯만 반영하고 WARN을 남깁니다.
+- 크레인 슬롯 밖의 공통 블록(PLC 시각, 최근접 충돌정보, 프리셋, 레일, 장애물, 통신에러)은 받지 않고 `common`으로 셉니다.
+- 레코드 키가 하나라 파티션 하나에만 들어오므로 외업 리스너 스레드는 1개입니다. 컨슈머 그룹은 `{그룹}-outdoor`로 따로 둡니다.
 
 ## 코드 구조 (헥사고날)
 
 ```
 com.hanwha.cis
-├── domain.model      TagKey, TagValue, TagReading, TagState, CraneState, CraneSnapshot  (프레임워크 비의존)
+├── domain.model      TagKey, TagValue, TagReading, TagState, CraneState, CraneSnapshot, CraneScope(indoor/outdoor),
+│                     OutdoorCraneId(Crane_ID → craneId)  (프레임워크 비의존)
 ├── application
-│   ├── port.in       IngestTagReading / PushSnapshots / RecordHistory / QueryCraneState / QueryCraneHistory UseCase
+│   ├── port.in       IngestTagReading / IngestOutdoorTag / PushSnapshots / RecordHistory / QueryCraneState / QueryCraneHistory UseCase
 │   ├── port.out      CraneStateStorePort(Redis), SnapshotPublisherPort(Redis 채널), CraneHistoryPort(DB), CraneRegistryPort(DB)
-│   ├── service       CraneStateRegistry, TagIngestionService, SnapshotPushService, HistoryRecordingService, 조회 서비스
+│   ├── service       CraneStateRegistry, TagIngestionService, OutdoorTagIngestionService, SnapshotPushService,
+│   │                 HistoryRecordingService, 조회 서비스
 │   └── support       FailureLog(연속 실패 로그를 시작·지속·복구로 줄임), Durations
 ├── adapter
-│   ├── in.kafka      CraneEventKafkaListener, KafkaListenerMetrics(cis.kafka.*)
+│   ├── in.kafka      CraneEventKafkaListener(indoor), OutdoorCraneEventKafkaListener, KafkaListenerMetrics(cis.kafka.*)
 │   ├── in.scheduler  SnapshotPushScheduler(250ms), HistoryRecordScheduler(1s), SummaryLogScheduler(60s), IngestWatchScheduler(5s),
 │   │                 PushWatchScheduler(5s)
-│   ├── in.web        CraneController, CraneHistoryController, ApiExceptionHandler(ProblemDetail)
+│   ├── in.web        CraneController(indoor), OutdoorCraneController, CraneHistoryController, ApiExceptionHandler(ProblemDetail)
 │   ├── in.websocket  StompConfig, SnapshotStompBroadcaster, RedisSnapshotSubscriber
 │   ├── out.redis     RedisCraneStateStore, RedisSnapshotPublisher
 │   └── out.persistence HistoryWriter(전용 쓰기 스레드), JPA 엔티티·리포지토리, 어댑터
@@ -108,7 +125,7 @@ Git Bash, macOS, Linux에서는 `.\gradlew.bat` 대신 `./gradlew`를 사용합�
 
 | 대상 | 기본값 | 환경 변수 |
 |---|---|---|
-| Kafka | `localhost:29092`, 토픽 `ocean.crane.indoor.event`, 그룹 `crane-integrated-server` | `KAFKA_BOOTSTRAP_SERVERS` |
+| Kafka | `localhost:29092`, 토픽 `ocean.crane.indoor.event`(그룹 `crane-integrated-server`), `ocean.crane.outdoor.event`(그룹 `crane-integrated-server-outdoor`) | `KAFKA_BOOTSTRAP_SERVERS` |
 | PostgreSQL | `jdbc:postgresql://localhost:5432/cis` (cis / cis) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` |
 | Redis | `localhost:6379` | `REDIS_HOST`, `REDIS_PORT` |
 | compose 포트 | 5432, 6379 (호스트 127.0.0.1에만 열림) | `CIS_DB_PORT`, `CIS_REDIS_PORT` |
@@ -194,32 +211,41 @@ Docker와 Podman 둘 다 지원합니다. `compose.yaml`과 `Dockerfile`은 두 
 
 ## API
 
-REST (`/api`, 오류는 RFC 9457 ProblemDetail):
+REST (`/api`, 오류는 RFC 9457 ProblemDetail). 내업은 `/api/cranes`, 외업은 `/api/outdoor/cranes` 아래이고 경로 뒤쪽은 같습니다:
 
 | 메서드·경로 | 파라미터 | 응답 |
 |---|---|---|
-| `GET /api/cranes` | – | 크레인 스냅샷 목록 |
-| `GET /api/cranes/{craneId}` | – | 스냅샷 1건 (없으면 404) |
-| `GET /api/cranes/{craneId}/history` | `from`, `to` (ISO-8601, 필수), `step` (기본 1s, 예: `5s`, `1m`) | baseline + step 간격 프레임(sample-and-hold) |
-| `GET /api/cranes/{craneId}/changes` | `from`, `to`, `after` (커서), `limit` (기본 500, 최대 5000) | 상태가 변한 시점의 행 + `nextCursor` |
+| `GET /api/cranes`, `GET /api/outdoor/cranes` | – | 그 범위의 크레인 스냅샷 목록 |
+| `GET /api/cranes/{craneId}`, `GET /api/outdoor/cranes/{craneId}` | – | 스냅샷 1건 (없거나 다른 범위의 크레인이면 404) |
+| `GET …/{craneId}/history` | `from`, `to` (ISO-8601, 필수), `step` (기본 1s, 예: `5s`, `1m`) | baseline + step 간격 프레임(sample-and-hold) |
+| `GET …/{craneId}/changes` | `from`, `to`, `after` (커서), `limit` (기본 500, 최대 5000) | 상태가 변한 시점의 행 + `nextCursor` |
 
 범위는 최대 1시간, 프레임 수는 최대 5000개이며 넘으면 400입니다. DB에 접근하지 못하면 `history`·`changes`는 503입니다.
 `from`이 현재 시각 이후면 400이고, `to`가 현재 시각 이후면 현재까지로 자릅니다(`history`는 `from` 기준 step 격자에서 현재 이하의 마지막 프레임까지 만들고, 응답 `to`에 잘린 끝 시각을 담습니다).
+이력은 내업·외업이 같은 테이블이고 크레인 ID가 겹치지 않아, `history`·`changes`는 두 경로 모두 크레인 ID로만 찾습니다.
 
-스냅샷 형태:
+스냅샷 형태(`scope`는 `indoor` 또는 `outdoor`, 값 없음은 `null`):
 
 ```json
-{"craneId":"C_867","stationId":"isl-ocean-crane","bay":"F5_1_Bay",
+{"craneId":"C_867","scope":"indoor","stationId":"isl-ocean-crane","bay":"F5_1_Bay",
  "snapshotAt":"2026-10-19T05:23:16.993Z","lastReceivedAt":"2026-10-19T05:23:17.001Z","online":true,
  "tags":{"tl_status":{"value":false,"quality":0,"timestamp":"2026-10-19T05:23:16.993Z"}, "...":{}}}
+```
+
+외업 스냅샷은 태그 이름이 원본 TagKey이고 `bay`가 PLC 장비 이름입니다:
+
+```json
+{"craneId":"GC_01","scope":"outdoor","stationId":"isl-ocean-crane","bay":"{PLC 장비 이름}", "...":"",
+ "tags":{"4_Crane.4_CR01.4_POS.03_Center_POS_x1":{"value":2000,"quality":0,"timestamp":"..."},
+         "4_Crane.4_CR01.2_slow.52_TL_FW_slow_1":{"value":null,"quality":0,"timestamp":"..."}, "...":{}}}
 ```
 
 WebSocket (STOMP, SockJS 없음):
 
 - 엔드포인트 `ws://localhost:8080/ws`
-- `/topic/cranes` — 250ms 틱마다 변한 크레인 묶음 `{"type":"snapshot","sentAt":...,"cranes":[스냅샷...]}`
-- `/topic/cranes/{craneId}` — 크레인별 스냅샷 1건
-- 구독 직후 초기 화면은 `GET /api/cranes`로 채웁니다.
+- `/topic/cranes`, `/topic/outdoor/cranes` — 250ms 틱마다 그 범위에서 변한 크레인 묶음 `{"type":"snapshot","sentAt":...,"cranes":[스냅샷...]}`
+- `/topic/cranes/{craneId}`, `/topic/outdoor/cranes/{craneId}` — 크레인별 스냅샷 1건
+- 구독 직후 초기 화면은 `GET /api/cranes`(외업은 `GET /api/outdoor/cranes`)로 채웁니다.
 
 허용 오리진은 `cis.web.allowed-origins`(기본 `http://localhost:*`)로 REST CORS와 STOMP 핸드셰이크에 같이 적용됩니다.
 
@@ -230,6 +256,8 @@ GET http://localhost:8080/actuator/health      # db, redis 인디케이터 포�
 GET http://localhost:8080/actuator/health/liveness   # 프로세스 자체 상태(컨테이너 헬스 체크용, 외부 의존성 제외)
 GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.history.*, cis.ws.sessions, cis.cranes.*
 ```
+
+`cis.ingest.*`와 `cis.kafka.*`에는 태그 `source=indoor|outdoor`가 붙습니다. 이름만 주면 합계이고, 나눠 보려면 `/actuator/metrics/cis.ingest.received?tag=source:outdoor`처럼 조회합니다.
 
 - 서버 로그에 60초마다 요약 한 줄이 찍힙니다(아래 [로그](#로그) 참고).
 - Redis: `podman exec cis-redis redis-cli HLEN cis:crane:state` (크레인 수), `SUBSCRIBE cis:crane:snapshots`
@@ -256,11 +284,13 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 
 | 로그 | 의미 |
 |---|---|
-| `Ready \| kafka=… topic=… \| db=… \| redis=… \| logs=…` | 기동 완료. 실제로 붙은 주소 |
-| `Kafka ingest started` / `Kafka ingest resumed after …` | 수신 시작·복구 |
-| `Kafka ingest stopped: no connection to broker …` | Kafka 브로커에 연결 안 됨. ISL Kafka 컨테이너와 주소·포트 확인 |
-| `Kafka ingest stopped: connected to … but no partition of topic … is assigned` | 토픽이 없거나, 브로커가 알려 주는 주소(advertised listener)에 이 서버가 접근하지 못함 |
+| `Ready \| kafka=… topic=… outdoor-topic=… \| db=… \| redis=… \| logs=…` | 기동 완료. 실제로 붙은 주소 |
+| `Kafka ingest started` / `Kafka ingest resumed after …` | 수신 시작·복구. 아래 수신 감시 줄은 모두 토픽(indoor·outdoor)별로 따로 남는다 |
+| `Kafka ingest stopped: no connection to broker … for topic …` | Kafka 브로커에 연결 안 됨. ISL Kafka 컨테이너와 주소·포트 확인 |
+| `Kafka ingest stopped: connected to … but no partition of topic … is assigned` | 토픽이 없거나, 브로커가 알려 주는 주소(advertised listener)에 이 서버가 접근하지 못함. outdoor만 이러면 ISL에 외업 Agent·Kafka route가 등록됐는지 확인 |
 | `Kafka ingest stopped: connected with N partition(s) … but no messages` | Kafka는 정상이고 상류(ISL Kafka Provider·MQTT Agent·Node-RED)가 발행하지 않음 |
+| `Outdoor slot … reports crane … that slot … already has` | 외업 PLC가 같은 Crane_ID를 두 슬롯에 보냄. 먼저 잡은 슬롯만 반영 |
+| `Outdoor Crane_ID … does not follow the crane type rule` | 타입 규칙 밖의 Crane_ID. `ID_{숫자}` 크레인으로 받음 |
 | `Cranes offline, no data for 30s …` / `Cranes online …` | 크레인별 수신 끊김·복귀 |
 | `Live push stalled: …` / `Live push resumed after …` | Redis 발행은 되는데 구독으로 돌아오지 않아 웹 화면이 갱신되지 않음. Redis 구독 상태 확인 |
 | `History writes dropped: N failed to write (time … ~ …), …` | 이력을 버렸음(ERROR, 1분마다). `time` 범위가 DB에 비는 구간 = 리플레이 공백 |
@@ -273,9 +303,13 @@ GET http://localhost:8080/actuator/metrics     # cis.ingest.*, cis.kafka.*, cis.
 60초 요약 한 줄:
 
 ```
-ingest received=… changed=… skipped=… (parse=… mismatch=… late=…) | kafka connections=… partitions=…
-  | history rows=…/… queue=… failures=… dropped=… | push published=… forwarded=… | ws sessions=… | cranes online=…/…
+ingest indoor received=… changed=… skipped=… (parse=… mismatch=… late=…) null=… partitions=…
+  | outdoor received=… changed=… skipped=… (parse=… mismatch=… late=…) null=… partitions=… common=… unassigned=…
+  | kafka connections=… | history rows=…/… queue=… failures=… dropped=… | push published=… forwarded=…
+  | ws sessions=… | cranes online=…/…
 ```
+
+`null`은 값 없음으로 받은 태그 수, outdoor의 `common`은 크레인 슬롯 밖 공통 블록, `unassigned`는 Crane_ID가 0인(또는 아직 모르는) 슬롯의 태그 수입니다(둘 다 `received`에 포함).
 
 `push`는 Redis 채널에 발행한 메시지 수와 구독으로 받아 STOMP로 넘긴 메시지 수입니다. 정상이면 같습니다.
 
@@ -285,4 +319,4 @@ ingest received=… changed=… skipped=… (parse=… mismatch=… late=…) | 
 .\gradlew.bat test
 ```
 
-테스트는 `test` 프로필로 돌며 H2(PostgreSQL 모드)를 씁니다. Kafka는 EmbeddedKafka로, Redis는 in-memory 포트 구현으로 대체하므로 외부 인프라 없이 실행됩니다. `CraneIngestionEndToEndTest`가 실제 형식의 메시지를 넣어 REST 응답, DB 행, STOMP 수신까지 확인합니다.
+테스트는 `test` 프로필로 돌며 H2(PostgreSQL 모드)를 씁니다. Kafka는 EmbeddedKafka로, Redis는 in-memory 포트 구현으로 대체하므로 외부 인프라 없이 실행됩니다. `CraneIngestionEndToEndTest`가 내업·외업 실제 형식의 메시지를 넣어 REST 응답, DB 행, STOMP 수신까지 확인합니다.

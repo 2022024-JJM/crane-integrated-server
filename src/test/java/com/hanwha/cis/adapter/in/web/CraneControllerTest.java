@@ -14,6 +14,7 @@ import com.hanwha.cis.application.port.in.QueryCraneHistoryUseCase.Frame;
 import com.hanwha.cis.application.port.in.QueryCraneHistoryUseCase.HistoryChanges;
 import com.hanwha.cis.application.port.in.QueryCraneHistoryUseCase.HistoryFrames;
 import com.hanwha.cis.application.port.in.QueryCraneStateUseCase;
+import com.hanwha.cis.domain.model.CraneScope;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import com.hanwha.cis.domain.model.TagState;
 import com.hanwha.cis.domain.model.TagValue;
@@ -32,7 +33,7 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import org.springframework.transaction.CannotCreateTransactionException;
 
-@WebMvcTest({CraneController.class, CraneHistoryController.class})
+@WebMvcTest({CraneController.class, OutdoorCraneController.class, CraneHistoryController.class})
 class CraneControllerTest {
 
     private static final Instant T0 = Instant.parse("2026-10-19T05:23:16.993Z");
@@ -47,20 +48,27 @@ class CraneControllerTest {
     private QueryCraneHistoryUseCase historyQuery;
 
     private static CraneSnapshot snapshot() {
-        return new CraneSnapshot("C_867", "isl-ocean-crane", "F5_1_Bay", T0, T0, true, Map.of(
+        return new CraneSnapshot("C_867", CraneScope.INDOOR, "isl-ocean-crane", "F5_1_Bay", T0, T0, true, Map.of(
                 "tl_status", new TagState(TagValue.of(false), 0, T0),
                 "hoist_height_value", new TagState(TagValue.of(120), 0, T0),
                 "ratio", new TagState(TagValue.of(0.5), 0, T0)));
     }
 
+    private static CraneSnapshot outdoorSnapshot() {
+        return new CraneSnapshot("GC_01", CraneScope.OUTDOOR, "isl-ocean-crane", "OUTDOOR_PLC", T0, T0, true, Map.of(
+                "4_Crane.4_CR01.4_POS.03_Center_POS_x1", new TagState(TagValue.of(2000), 0, T0),
+                "4_Crane.4_CR01.2_slow.52_TL_FW_slow_1", new TagState(TagValue.NULL, 0, T0)));
+    }
+
     @Test
     void listsCranesAsJson() {
-        given(stateQuery.list()).willReturn(List.of(snapshot()));
+        given(stateQuery.list(CraneScope.INDOOR)).willReturn(List.of(snapshot()));
 
         MvcTestResult result = mvc.get().uri("/api/cranes").exchange();
 
         assertThat(result).hasStatusOk().hasContentTypeCompatibleWith(MediaType.APPLICATION_JSON);
         assertThat(result).bodyJson().extractingPath("$[0].craneId").isEqualTo("C_867");
+        assertThat(result).bodyJson().extractingPath("$[0].scope").isEqualTo("indoor");
         assertThat(result).bodyJson().extractingPath("$[0].online").isEqualTo(true);
         assertThat(result).bodyJson().extractingPath("$[0].snapshotAt").isEqualTo("2026-10-19T05:23:16.993Z");
         assertThat(result).bodyJson().extractingPath("$[0].tags.tl_status.value").isEqualTo(false);
@@ -71,7 +79,7 @@ class CraneControllerTest {
 
     @Test
     void returnsSingleCrane() {
-        given(stateQuery.get("C_867")).willReturn(snapshot());
+        given(stateQuery.get(CraneScope.INDOOR, "C_867")).willReturn(snapshot());
 
         MvcTestResult result = mvc.get().uri("/api/cranes/C_867").exchange();
 
@@ -81,7 +89,7 @@ class CraneControllerTest {
 
     @Test
     void unknownCraneIsProblemDetail404() {
-        given(stateQuery.get("C_999")).willThrow(new CraneNotFoundException("C_999"));
+        given(stateQuery.get(CraneScope.INDOOR, "C_999")).willThrow(new CraneNotFoundException("C_999"));
 
         MvcTestResult result = mvc.get().uri("/api/cranes/C_999").exchange();
 
@@ -206,6 +214,40 @@ class CraneControllerTest {
 
         assertThat(result).hasStatusOk();
         assertThat(result).bodyJson().extractingPath("$.baseline").isNull();
+    }
+
+    @Test
+    void listsAndReturnsOutdoorCranesOnTheirOwnPath() {
+        given(stateQuery.list(CraneScope.OUTDOOR)).willReturn(List.of(outdoorSnapshot()));
+        given(stateQuery.get(CraneScope.OUTDOOR, "GC_01")).willReturn(outdoorSnapshot());
+
+        MvcTestResult list = mvc.get().uri("/api/outdoor/cranes").exchange();
+        MvcTestResult single = mvc.get().uri("/api/outdoor/cranes/GC_01").exchange();
+
+        assertThat(list).hasStatusOk();
+        assertThat(list).bodyJson().extractingPath("$[0].craneId").isEqualTo("GC_01");
+        assertThat(list).bodyJson().extractingPath("$[0].scope").isEqualTo("outdoor");
+        assertThat(list).bodyJson().extractingPath("$[0].tags['4_Crane.4_CR01.4_POS.03_Center_POS_x1'].value")
+                .isEqualTo(2000);
+        assertThat(list).bodyJson().extractingPath("$[0].tags['4_Crane.4_CR01.2_slow.52_TL_FW_slow_1'].value")
+                .isNull();
+        assertThat(single).hasStatusOk();
+        assertThat(single).bodyJson().extractingPath("$.bay").isEqualTo("OUTDOOR_PLC");
+    }
+
+    @Test
+    void outdoorHistoryUsesTheSameQueryByCraneId() {
+        Instant from = Instant.parse("2026-10-19T05:00:00Z");
+        Instant to = Instant.parse("2026-10-19T05:00:10Z");
+        given(historyQuery.frames(eq("GC_01"), eq(from), eq(to), isNull())).willReturn(new HistoryFrames(
+                "GC_01", from, to, Duration.ofSeconds(1), List.of(), null, List.of(), false));
+
+        MvcTestResult result = mvc.get().uri("/api/outdoor/cranes/GC_01/history")
+                .param("from", from.toString()).param("to", to.toString())
+                .exchange();
+
+        assertThat(result).hasStatusOk();
+        assertThat(result).bodyJson().extractingPath("$.craneId").isEqualTo("GC_01");
     }
 
     @Test

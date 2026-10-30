@@ -4,6 +4,7 @@ import com.hanwha.cis.application.port.in.CraneNotFoundException;
 import com.hanwha.cis.application.port.in.QueryCraneStateUseCase;
 import com.hanwha.cis.application.port.out.CraneStateStorePort;
 import com.hanwha.cis.application.support.FailureLog;
+import com.hanwha.cis.domain.model.CraneScope;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import java.time.Clock;
 import java.time.Duration;
@@ -14,7 +15,10 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** 저장소(Redis)를 먼저 읽고, 비어 있거나 장애면 메모리 상태를 돌려준다. 장애 로그는 요청마다가 아니라 시작·지속·복구만 남긴다. */
+/**
+ * 저장소(Redis)를 먼저 읽고, 비어 있거나 장애면 메모리 상태를 돌려준다. 장애 로그는 요청마다가 아니라 시작·지속·복구만 남긴다.
+ * 저장소에는 indoor·outdoor 스냅샷이 함께 있으므로 scope로 거른다.
+ */
 public class CraneStateQueryService implements QueryCraneStateUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(CraneStateQueryService.class);
@@ -36,21 +40,24 @@ public class CraneStateQueryService implements QueryCraneStateUseCase {
     }
 
     @Override
-    public List<CraneSnapshot> list() {
-        List<CraneSnapshot> stored = readStore(store::findAll).orElse(List.of());
+    public List<CraneSnapshot> list(CraneScope scope) {
+        List<CraneSnapshot> stored = readStore(store::findAll).orElse(List.of()).stream()
+                .filter(snapshot -> snapshot.scope() == scope)
+                .toList();
         if (!stored.isEmpty()) {
             return stored.stream().sorted(Comparator.comparing(CraneSnapshot::craneId)).toList();
         }
-        return registry.snapshots(clock.instant(), staleThreshold);
+        return registry.snapshots(scope, clock.instant(), staleThreshold);
     }
 
     @Override
-    public CraneSnapshot get(String craneId) {
+    public CraneSnapshot get(CraneScope scope, String craneId) {
         return readStore(() -> store.find(craneId))
                 .flatMap(found -> found)
                 .or(() -> registry.find(craneId)
                         .map(state -> state.snapshot(clock.instant(), staleThreshold))
                         .filter(snapshot -> snapshot.snapshotAt() != null))
+                .filter(snapshot -> snapshot.scope() == scope)
                 .orElseThrow(() -> new CraneNotFoundException(craneId));
     }
 

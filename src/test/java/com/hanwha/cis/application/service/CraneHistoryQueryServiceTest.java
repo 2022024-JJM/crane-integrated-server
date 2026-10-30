@@ -10,6 +10,7 @@ import com.hanwha.cis.application.port.in.QueryCraneHistoryUseCase.Frame;
 import com.hanwha.cis.application.port.in.QueryCraneHistoryUseCase.HistoryChanges;
 import com.hanwha.cis.application.port.in.QueryCraneHistoryUseCase.HistoryFrames;
 import com.hanwha.cis.application.service.CraneHistoryQueryService.Limits;
+import com.hanwha.cis.domain.model.CraneScope;
 import com.hanwha.cis.domain.model.CraneSnapshot;
 import com.hanwha.cis.domain.model.TagState;
 import com.hanwha.cis.domain.model.TagValue;
@@ -37,7 +38,7 @@ class CraneHistoryQueryServiceTest {
             new CraneHistoryQueryService(history, cranes, registry, clock, LIMITS);
 
     private static CraneSnapshot snapshot(Instant at, boolean online, int height) {
-        return new CraneSnapshot("C_867", "isl-ocean-crane", "F5_1_Bay", at, at, online,
+        return new CraneSnapshot("C_867", CraneScope.INDOOR, "isl-ocean-crane", "F5_1_Bay", at, at, online,
                 Map.of("height", new TagState(TagValue.of(height), 0, at)));
     }
 

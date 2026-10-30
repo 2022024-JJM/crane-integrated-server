@@ -21,10 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 이력 조회. from/to는 ISO-8601 Instant, step은 "5s"/"1m"/"PT5S" 형식.
+ * 내업·외업이 같은 테이블이고 크레인 ID가 겹치지 않으므로, 두 경로 모두 크레인 ID로만 찾는다(scope는 보지 않는다).
  * DB 장애는 요청마다 스택트레이스를 남기지 않고 시작·지속·복구만 남기며(FailureLog) 503으로 돌려준다.
  */
 @RestController
-@RequestMapping("/api/cranes/{craneId}")
+@RequestMapping({"/api/cranes/{craneId}", "/api/outdoor/cranes/{craneId}"})
 public class CraneHistoryController {
 
     private static final Logger log = LoggerFactory.getLogger(CraneHistoryController.class);

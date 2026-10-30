@@ -2,10 +2,13 @@ package com.hanwha.cis.domain.model;
 
 /**
  * 태그 값. 변경 감지 전에 정규화한다: 숫자는 모두 double로(1 == 1.0), "true"/"false"/"1" 같은 문자열도 해석한다.
+ * 원본이 값 없음(JSON null, 문자열 "NULL")이면 {@link #NULL}이고 JSON으로는 null로 나간다.
  */
-public sealed interface TagValue permits TagValue.BoolValue, TagValue.NumberValue {
+public sealed interface TagValue permits TagValue.BoolValue, TagValue.NumberValue, TagValue.NullValue {
 
-    /** JSON 등으로 내보낼 원시 값(Boolean 또는 Double). */
+    TagValue NULL = new NullValue();
+
+    /** JSON 등으로 내보낼 원시 값(Boolean, Double, 값 없음이면 null). */
     Object raw();
 
     record BoolValue(boolean value) implements TagValue {
@@ -33,9 +36,17 @@ public sealed interface TagValue permits TagValue.BoolValue, TagValue.NumberValu
         }
     }
 
+    /** 값 없음. 인스턴스는 {@link TagValue#NULL}을 쓴다(레코드라 모든 인스턴스가 서로 같다). */
+    record NullValue() implements TagValue {
+        @Override
+        public Object raw() {
+            return null;
+        }
+    }
+
     static TagValue of(Object raw) {
         return switch (raw) {
-            case null -> throw new IllegalArgumentException("tag value is null");
+            case null -> NULL;
             case TagValue v -> v;
             case Boolean b -> new BoolValue(b);
             case Number n -> new NumberValue(n.doubleValue());
@@ -52,6 +63,9 @@ public sealed interface TagValue permits TagValue.BoolValue, TagValue.NumberValu
         }
         if (trimmed.equalsIgnoreCase("false")) {
             return new BoolValue(false);
+        }
+        if (trimmed.equalsIgnoreCase("null")) {
+            return NULL;
         }
         try {
             return new NumberValue(Double.parseDouble(trimmed));

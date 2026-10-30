@@ -16,6 +16,7 @@ Node-RED ─MQTT──▶ MQTT Agent ▶ Engine ▶ Kafka Provider ─▶ Topic 
 
 - ①~③은 외부 시스템이다. 크레인 값은 Node-RED 크레인 시뮬레이터가 만들어 MQTT로 발행하고, 수집과 Kafka produce는 IntersysLink v4의 MQTT Agent가 하며, 이 서버는 토픽을 subscribe만 한다.
 - 서버 내부 흐름은 `Kafka Consumer → Service(데이터 가공/처리) → WebSocket(STOMP) 푸시 + REST 조회`다.
+- 토픽은 내업 `ocean.crane.indoor.event`와 외업 `ocean.crane.outdoor.event` 두 개다. 외업은 PLC 장비 하나가 크레인 슬롯 30개와 공통 블록을 보내므로, 서버가 슬롯의 Crane_ID로 크레인을 나눈다. 태그 이름·값은 원본 그대로 두고, 화면 구조에 맞지 않는 부분만 서버가 바꾼다.
 - Service는 Kafka로 받은 데이터를 실시간 푸시와 별개로 ⑥ PostgreSQL(TimescaleDB 확장)에 저장한다. 리플레이 등 저장 데이터가 필요한 기능은 이 DB를 읽는다.
 
 ## 명령어
@@ -60,12 +61,16 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 
 - 패키지는 `domain / application / adapter / config`로 나뉘고 의존 방향은 `domain ← application ← adapter, config`다. 어댑터(`adapter.in.*`, `adapter.out.*`)끼리는 서로 의존하지 않는다. `ArchitectureTest`(ArchUnit)가 이를 검사하므로 위반하면 테스트가 실패한다.
 - `domain`과 `application`에는 Spring·JPA·Jackson 등 프레임워크 코드를 두지 않는다. 애플리케이션 서비스는 스테레오타입 어노테이션 없이 `config/ApplicationConfig`에서 `@Bean`으로 조립하고, 설정값(`CisProperties`)은 거기서만 풀어 생성자로 넘긴다.
-- 도메인 타입의 JSON 표현은 `config/TagValueJacksonComponent`(`@JacksonComponent`)로 등록한다. REST·Redis·이력 JSON·STOMP가 모두 Boot의 `JsonMapper` 빈 하나를 쓴다.
+- 도메인 타입의 JSON 표현은 `config/DomainJacksonComponent`(`@JacksonComponent`)로 등록한다. REST·Redis·이력 JSON·STOMP가 모두 Boot의 `JsonMapper` 빈 하나를 쓴다.
+- 내업·외업은 `CraneScope`(스냅샷 JSON의 `scope`)로 나눈다. REST(`/api/cranes` ↔ `/api/outdoor/cranes`)와 STOMP(`/topic/cranes` ↔ `/topic/outdoor/cranes`)는 scope로 갈리고, 메모리 상태·Redis 키와 채널·이력 테이블은 함께 쓴다. 이력 조회는 두 경로 모두 크레인 ID로만 찾는다.
+- 외업 코드는 `Outdoor` 접두어로 이름 짓고(`OutdoorTagIngestionService`, `OutdoorCraneEventKafkaListener`), 이름과 주석에 데이터 출처 장비 이름을 쓰지 않는다. 기존 내업 코드는 접두어 없이 쓴다.
+- 수신 카운터(`IngestStats`)는 scope마다 빈 하나다(`ApplicationConfig.INDOOR_INGEST_STATS`, `OUTDOOR_INGEST_STATS`). `cis.ingest.*`·`cis.kafka.*` 미터는 태그 `source=indoor|outdoor`로 나뉜다.
 - 어댑터가 공유해야 하는 이름(Redis 키·채널, Kafka 토픽)은 어댑터 상수가 아니라 `cis.*` 설정(`CisProperties`)에 둔다.
 
 ## 스레드 규칙
 
 - Kafka 리스너 스레드(파티션당 1개)는 메모리 상태(`CraneStateRegistry`)만 갱신한다. DB·Redis를 직접 호출하지 않는다.
+- 외업 리스너는 스레드 1개다(레코드 키가 하나라 파티션도 하나). 외업 슬롯 상태(슬롯별 Crane_ID와 태그 최근 값)는 `OutdoorTagIngestionService` 안에서만 바꾸고 `ingest`를 동기화한다.
 - 푸시(250ms)·이력(1s)·요약 로그(60s)·수신 감시(5s)·푸시 감시(5s)는 각각 `SchedulingConfig`의 전용 single-thread 스케줄러에서 돈다. 새 주기 작업은 `FixedDelayScheduler`를 상속해 만들고 전용 스케줄러 빈을 추가한다. 스케줄러 빈 이름은 작업 컴포넌트의 기본 빈 이름(클래스 이름의 첫 글자를 소문자로)과 겹치면 안 된다(`PushWatchScheduler` ↔ `pushWatchTaskScheduler`). `!test` 컴포넌트면 테스트로는 드러나지 않고 실제 기동만 실패한다.
 - DB 쓰기는 `HistoryWriter` 스레드만 한다. 다른 스레드는 `enqueue`로 큐에 넣는다(큐가 차면 버리고 카운트).
 - STOMP 전송(`SimpMessagingTemplate`)은 Redis 구독 executor(`redis-sub-`)에서 한다.
@@ -100,7 +105,7 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 - REST는 요청마다 남기지 않는다(access log 없음). `cis.web.slow-request-threshold` 이상 걸린 `/api/*` 요청만 `SlowRequestLogFilter`가 WARN으로 남긴다.
 - 같은 대상이 반복해서 실패하는 곳(외부 시스템 호출, 주기 작업)은 매번 찍지 않고 `application.support.FailureLog`로 시작·지속(1분마다)·복구만 남긴다. `FixedDelayScheduler`는 틱 실패를 이미 이렇게 남긴다.
 - 외부 라이브러리의 반복 WARN·ERROR는 `RepeatedLogFilter`가 1분에 한 번으로 줄인다. 대상은 `logback-spring.xml`의 `loggerPrefix`이고, 시끄러운 INFO는 `logging.level`로 끈다(`org.apache.kafka`는 WARN).
-- Kafka 수신 상태(브로커 연결·파티션 할당·메시지 유무)는 `IngestWatchScheduler`가 판정해 남긴다. 리스너 id `ingest`는 스레드 이름과 client.id에 쓰이고, `idIsGroup = false`라 그룹은 `spring.kafka.consumer.group-id`를 따른다.
+- Kafka 수신 상태(브로커 연결·파티션 할당·메시지 유무)는 `IngestWatchScheduler`가 토픽(indoor·outdoor)별로 따로 판정해 남긴다. 리스너 id(`ingest`, `ingest-outdoor`)는 스레드 이름과 client.id에 쓰이고, `idIsGroup = false`라 내업 그룹은 `spring.kafka.consumer.group-id`, 외업 그룹은 그 뒤에 `-outdoor`를 붙인 이름이다(한쪽 리밸런스가 다른 쪽 수신을 멈추지 않게).
 - 실시간 푸시 경로(Redis 발행 → 구독 → STOMP)는 `PushWatchScheduler`가 `cis.push.published`와 `cis.push.forwarded`를 비교해 판정한다(`!test` 프로필에서만 뜬다).
 - 테스트에서 로그를 검증할 때는 `support.LogCapture`를 쓴다.
 

@@ -41,8 +41,16 @@ class TagValueTest {
     }
 
     @Test
+    void readsMissingValueAsNull() {
+        assertThat(TagValue.of(null)).isSameAs(TagValue.NULL);
+        assertThat(TagValue.of("NULL")).isEqualTo(TagValue.NULL);
+        assertThat(TagValue.of(" null ")).isEqualTo(TagValue.NULL);
+        assertThat(TagValue.NULL.raw()).isNull();
+        assertThat(TagValue.NULL).isNotEqualTo(TagValue.of(false)).isNotEqualTo(TagValue.of(0));
+    }
+
+    @Test
     void rejectsUnsupportedValues() {
-        assertThatIllegalArgumentException().isThrownBy(() -> TagValue.of(null));
         assertThatIllegalArgumentException().isThrownBy(() -> TagValue.of("abc"));
         assertThatIllegalArgumentException().isThrownBy(() -> TagValue.of("NaN"));
         assertThatIllegalArgumentException().isThrownBy(() -> TagValue.of(new Object()));
