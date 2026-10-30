@@ -2,8 +2,8 @@ package com.hanwha.cis.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.IngestOutcome;
-import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
+import com.hanwha.cis.application.port.in.IngestIndoorTagUseCase.IngestOutcome;
+import com.hanwha.cis.application.port.in.RawTagEvent;
 import com.hanwha.cis.application.service.IngestStats.SkipReason;
 import com.hanwha.cis.domain.model.CraneScope;
 import com.hanwha.cis.domain.model.TagValue;
@@ -13,14 +13,14 @@ import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
-class TagIngestionServiceTest {
+class IndoorTagIngestionServiceTest {
 
     private static final Instant T0 = Instant.parse("2026-10-19T05:23:16.993Z");
 
     private final MutableClock clock = new MutableClock(T0);
     private final CraneStateRegistry registry = new CraneStateRegistry(new InMemoryCraneStateStore());
     private final IngestStats stats = new IngestStats(CraneScope.INDOOR);
-    private final TagIngestionService service = new TagIngestionService(registry, stats, clock);
+    private final IndoorTagIngestionService service = new IndoorTagIngestionService(registry, stats, clock);
 
     private static RawTagEvent event(String key, String craneId, String tagKey, Object value, long at) {
         return new RawTagEvent(key, "isl-ocean-crane", craneId, at, tagKey, value, 0);
@@ -104,15 +104,5 @@ class TagIngestionServiceTest {
 
         assertThat(stats.received()).isEqualTo(1);
         assertThat(stats.skipped(SkipReason.PARSE)).isEqualTo(1);
-    }
-
-    @Test
-    void rateLimiterAllowsBurstThenBlocksUntilNextWindow() {
-        TagIngestionService.RateLimiter limiter = new TagIngestionService.RateLimiter(2);
-
-        assertThat(limiter.tryAcquire(60_000)).isTrue();
-        assertThat(limiter.tryAcquire(60_001)).isTrue();
-        assertThat(limiter.tryAcquire(60_002)).isFalse();
-        assertThat(limiter.tryAcquire(120_000)).isTrue();
     }
 }

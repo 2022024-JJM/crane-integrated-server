@@ -11,12 +11,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** 내업(indoor) 크레인 목록·현재 상태. 외업은 {@link OutdoorCraneController}. */
 @RestController
-@RequestMapping("/api/cranes")
-public class CraneController {
+@RequestMapping("/api/indoor/cranes")
+public class IndoorCraneController {
 
     private final QueryCraneStateUseCase query;
 
-    public CraneController(QueryCraneStateUseCase query) {
+    public IndoorCraneController(QueryCraneStateUseCase query) {
         this.query = query;
     }
 

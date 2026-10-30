@@ -1,6 +1,7 @@
 package com.hanwha.cis.application.service;
 
-import com.hanwha.cis.application.port.in.IngestTagReadingUseCase;
+import com.hanwha.cis.application.port.in.IngestIndoorTagUseCase;
+import com.hanwha.cis.application.port.in.RawTagEvent;
 import com.hanwha.cis.application.service.IngestStats.SkipReason;
 import com.hanwha.cis.domain.model.ApplyResult;
 import com.hanwha.cis.domain.model.CraneScope;
@@ -9,8 +10,6 @@ import com.hanwha.cis.domain.model.TagReading;
 import com.hanwha.cis.domain.model.TagValue;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,18 +17,18 @@ import org.slf4j.LoggerFactory;
  * 내업(indoor) 원시 이벤트를 검증·정규화해 메모리 상태에 반영하고 카운터를 센다. 문제 메시지는 건너뛰되 분당 일정 건수만 로그에 남긴다.
  * 외업은 {@link OutdoorTagIngestionService}.
  */
-public class TagIngestionService implements IngestTagReadingUseCase {
+public class IndoorTagIngestionService implements IngestIndoorTagUseCase {
 
-    private static final Logger log = LoggerFactory.getLogger(TagIngestionService.class);
+    private static final Logger log = LoggerFactory.getLogger(IndoorTagIngestionService.class);
     private static final int MAX_PAYLOAD_SAMPLE = 200;
     private static final int MAX_SKIP_LOGS_PER_MINUTE = 10;
 
     private final CraneStateRegistry registry;
     private final IngestStats stats;
     private final Clock clock;
-    private final RateLimiter skipLogLimiter = new RateLimiter(MAX_SKIP_LOGS_PER_MINUTE);
+    private final SkipLogLimiter skipLogLimiter = new SkipLogLimiter(MAX_SKIP_LOGS_PER_MINUTE);
 
-    public TagIngestionService(CraneStateRegistry registry, IngestStats stats, Clock clock) {
+    public IndoorTagIngestionService(CraneStateRegistry registry, IngestStats stats, Clock clock) {
         this.registry = registry;
         this.stats = stats;
         this.clock = clock;
@@ -40,7 +39,7 @@ public class TagIngestionService implements IngestTagReadingUseCase {
         stats.onReceived();
         TagKey tagKey;
         try {
-            tagKey = TagKey.parse(event.tagKey());
+            tagKey = TagKey.parseIndoor(event.tagKey());
         } catch (IllegalArgumentException e) {
             return skip(SkipReason.PARSE, e.getMessage(), event);
         }
@@ -87,14 +86,14 @@ public class TagIngestionService implements IngestTagReadingUseCase {
         stats.onReceived();
         stats.onSkipped(SkipReason.PARSE);
         if (skipLogLimiter.tryAcquire(clock.millis())) {
-            log.warn("Skipping unparseable message: key={} payload={}", recordKey, truncate(payloadSample));
+            log.warn("Skipping unparseable indoor message: key={} payload={}", recordKey, truncate(payloadSample));
         }
     }
 
     private IngestOutcome skip(SkipReason reason, String why, RawTagEvent event) {
         stats.onSkipped(reason);
         if (skipLogLimiter.tryAcquire(clock.millis())) {
-            log.warn("Skipping message ({}): {} | key={} crane={} tagKey={} value={}",
+            log.warn("Skipping indoor message ({}): {} | key={} crane={} tagKey={} value={}",
                     reason.tag(), why, event.recordKey(), event.craneId(), event.tagKey(),
                     truncate(String.valueOf(event.value())));
         }
@@ -106,24 +105,5 @@ public class TagIngestionService implements IngestTagReadingUseCase {
             return text;
         }
         return text.substring(0, MAX_PAYLOAD_SAMPLE) + "...";
-    }
-
-    /** 1분 창 안에서 최대 N번만 허용하는 단순 제한기. */
-    static final class RateLimiter {
-        private final int maxPerMinute;
-        private final AtomicLong windowStart = new AtomicLong();
-        private final AtomicInteger count = new AtomicInteger();
-
-        RateLimiter(int maxPerMinute) {
-            this.maxPerMinute = maxPerMinute;
-        }
-
-        boolean tryAcquire(long nowMillis) {
-            long start = windowStart.get();
-            if (nowMillis - start >= 60_000 && windowStart.compareAndSet(start, nowMillis)) {
-                count.set(0);
-            }
-            return count.incrementAndGet() <= maxPerMinute;
-        }
     }
 }

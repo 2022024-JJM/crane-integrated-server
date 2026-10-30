@@ -69,8 +69,8 @@ public class IngestWatchScheduler extends FixedDelayScheduler {
 
     private static Map<CraneScope, String> topics(CisProperties properties) {
         Map<CraneScope, String> topics = new LinkedHashMap<>();
-        topics.put(CraneScope.INDOOR, properties.kafka().topic());
-        topics.put(CraneScope.OUTDOOR, properties.kafka().outdoorTopic());
+        topics.put(CraneScope.INDOOR, properties.kafka().indoor().topic());
+        topics.put(CraneScope.OUTDOOR, properties.kafka().outdoor().topic());
         return topics;
     }
 

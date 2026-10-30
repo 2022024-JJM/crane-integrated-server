@@ -34,8 +34,9 @@ class SnapshotStompBroadcasterTest {
 
         broadcaster.broadcast(List.of(indoor, outdoor));
 
-        verify(messaging).convertAndSend("/topic/cranes", new SnapshotMessage("snapshot", T0, List.of(indoor)));
-        verify(messaging).convertAndSend("/topic/cranes/C_867", indoor);
+        verify(messaging).convertAndSend("/topic/indoor/cranes",
+                new SnapshotMessage("snapshot", T0, List.of(indoor)));
+        verify(messaging).convertAndSend("/topic/indoor/cranes/C_867", indoor);
         verify(messaging).convertAndSend("/topic/outdoor/cranes",
                 new SnapshotMessage("snapshot", T0, List.of(outdoor)));
         verify(messaging).convertAndSend("/topic/outdoor/cranes/GC_01", outdoor);

@@ -38,25 +38,25 @@ class RepeatedLogFilterTest {
     void passesOneRepeatPerWindowAcrossConsumersAndReportsSuppressedCount() {
         Logger kafka = context.getLogger("org.apache.kafka.clients.NetworkClient");
         for (int i = 0; i < 50; i++) {
-            kafka.warn("[Consumer clientId=ingest-" + i % 3 + ", groupId=cis] Connection to node {} ({}) could not"
+            kafka.warn("[Consumer clientId=ingest-indoor-" + i % 3 + ", groupId=cis] Connection to node {} ({}) could not"
                     + " be established. Node may not be available.", -1, "localhost/127.0.0.1:29092");
         }
         assertThat(lines()).hasSize(1);
 
         now.addAndGet(59_999);
-        kafka.warn("[Consumer clientId=ingest-1, groupId=cis] Connection to node {} ({}) could not be established."
+        kafka.warn("[Consumer clientId=ingest-indoor-1, groupId=cis] Connection to node {} ({}) could not be established."
                 + " Node may not be available.", -1, "localhost/127.0.0.1:29092");
         assertThat(lines()).hasSize(1);
 
         now.addAndGet(1);
-        kafka.warn("[Consumer clientId=ingest-2, groupId=cis] Connection to node {} ({}) could not be established."
+        kafka.warn("[Consumer clientId=ingest-indoor-2, groupId=cis] Connection to node {} ({}) could not be established."
                 + " Node may not be available.", -1, "localhost/127.0.0.1:29092");
         assertThat(lines()).containsExactly(
-                "WARN org.apache.kafka.clients.NetworkClient [Consumer clientId=ingest-0, groupId=cis] Connection to"
+                "WARN org.apache.kafka.clients.NetworkClient [Consumer clientId=ingest-indoor-0, groupId=cis] Connection to"
                         + " node -1 (localhost/127.0.0.1:29092) could not be established. Node may not be available.",
                 "WARN com.hanwha.cis.config.RepeatedLogFilter org.apache.kafka.clients.NetworkClient: suppressed 50"
                         + " repeat(s) of the following message in the last 1m 0s",
-                "WARN org.apache.kafka.clients.NetworkClient [Consumer clientId=ingest-2, groupId=cis] Connection to"
+                "WARN org.apache.kafka.clients.NetworkClient [Consumer clientId=ingest-indoor-2, groupId=cis] Connection to"
                         + " node -1 (localhost/127.0.0.1:29092) could not be established. Node may not be available.");
     }
 

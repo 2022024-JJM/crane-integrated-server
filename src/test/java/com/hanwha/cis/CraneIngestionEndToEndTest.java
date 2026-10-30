@@ -103,8 +103,8 @@ class CraneIngestionEndToEndTest {
         WebSocketStompClient stomp = stompClient();
         List<Throwable> clientErrors = new CopyOnWriteArrayList<>();
         StompSession session = connect(stomp, clientErrors);
-        session.subscribe("/topic/cranes", queueing(allFrames));
-        session.subscribe("/topic/cranes/C_867", queueing(craneFrames));
+        session.subscribe("/topic/indoor/cranes", queueing(allFrames));
+        session.subscribe("/topic/indoor/cranes/C_867", queueing(craneFrames));
         await().atMost(Duration.ofSeconds(5)).until(() -> wsMetrics.sessions() == 1);
         Thread.sleep(300);
 
@@ -117,7 +117,7 @@ class CraneIngestionEndToEndTest {
 
         // REST 현재 상태 (컨슈머 그룹 조인 전에는 404이므로 예외도 재시도한다)
         await().atMost(Duration.ofSeconds(30)).ignoreExceptions().untilAsserted(() -> {
-            Map<String, Object> crane = getJson(rest, "/api/cranes/C_867");
+            Map<String, Object> crane = getJson(rest, "/api/indoor/cranes/C_867");
             assertThat(tags(crane)).hasSize(34);
             assertThat(crane.get("online")).isEqualTo(true);
             assertThat(crane.get("bay")).isEqualTo("F5_1_Bay");
@@ -126,7 +126,7 @@ class CraneIngestionEndToEndTest {
             assertThat(tagValue(crane, "status_1")).isEqualTo(false);
             assertThat(tagValue(crane, "hoist_height_value")).isEqualTo(120);
         });
-        List<Map<String, Object>> cranes = rest.get().uri("/api/cranes").retrieve()
+        List<Map<String, Object>> cranes = rest.get().uri("/api/indoor/cranes").retrieve()
                 .body(new ParameterizedTypeReference<>() { });
         assertThat(cranes).extracting(c -> c.get("craneId")).containsExactly("C_867", "C_871", "C_890");
         assertThat(ingestStats.skipped(SkipReason.PARSE)).isEqualTo(1);
@@ -174,7 +174,7 @@ class CraneIngestionEndToEndTest {
         // to가 아직 미래면 현재 시각으로 잘리므로, to가 지난 뒤에 조회해 프레임 수를 고정한다.
         await().atMost(Duration.ofSeconds(10)).until(() -> System.currentTimeMillis() > t2 + 2_000);
         Map<String, Object> history = getJson(rest,
-                "/api/cranes/C_867/history?from=" + from + "&to=" + to + "&step=1s");
+                "/api/indoor/cranes/C_867/history?from=" + from + "&to=" + to + "&step=1s");
         assertThat(history.get("craneId")).isEqualTo("C_867");
         assertThat(history.get("step")).isEqualTo("PT1S");
         assertThat((List<?>) history.get("tags")).hasSize(34);
@@ -186,17 +186,18 @@ class CraneIngestionEndToEndTest {
         Map<String, Object> lastValues = (Map<String, Object>) lastFrame.get("values");
         assertThat(lastValues.get("hoist_height_value")).isEqualTo(121);
 
-        Map<String, Object> changes = getJson(rest, "/api/cranes/C_867/changes?from=" + from + "&to=" + to);
+        Map<String, Object> changes = getJson(rest, "/api/indoor/cranes/C_867/changes?from=" + from + "&to=" + to);
         List<?> items = (List<?>) changes.get("items");
         assertThat(items.size()).isGreaterThanOrEqualTo(2);
         assertThat(changes.get("nextCursor")).isNull();
 
         // 오류 응답
-        assertThat(status(rest, "/api/cranes/C_999").value()).isEqualTo(404);
+        assertThat(status(rest, "/api/indoor/cranes/C_999").value()).isEqualTo(404);
+        assertThat(status(rest, "/api/cranes").value()).isEqualTo(404); // 범위 없는 옛 경로는 없다
         assertThat(status(rest, "/api/outdoor/cranes/C_867").value()).isEqualTo(404);
-        assertThat(status(rest, "/api/cranes/C_867/history?from=" + to + "&to=" + from).value()).isEqualTo(400);
+        assertThat(status(rest, "/api/indoor/cranes/C_867/history?from=" + to + "&to=" + from).value()).isEqualTo(400);
         Instant future = Instant.now().plusSeconds(60);
-        assertThat(status(rest, "/api/cranes/C_867/history?from=" + future + "&to=" + future.plusSeconds(10))
+        assertThat(status(rest, "/api/indoor/cranes/C_867/history?from=" + future + "&to=" + future.plusSeconds(10))
                 .value()).isEqualTo(400);
 
         // 컨테이너 헬스체크가 보는 liveness 프로브
@@ -219,7 +220,7 @@ class CraneIngestionEndToEndTest {
         StompSession session = connect(stomp, clientErrors);
         session.subscribe("/topic/outdoor/cranes", queueing(allFrames));
         session.subscribe("/topic/outdoor/cranes/GC_01", queueing(craneFrames));
-        session.subscribe("/topic/cranes/GC_01", queueing(indoorFrames));
+        session.subscribe("/topic/indoor/cranes/GC_01", queueing(indoorFrames));
         await().atMost(Duration.ofSeconds(5)).until(() -> wsMetrics.sessions() == 1);
         Thread.sleep(300);
 
@@ -245,10 +246,10 @@ class CraneIngestionEndToEndTest {
         List<Map<String, Object>> outdoorCranes = rest.get().uri("/api/outdoor/cranes").retrieve()
                 .body(new ParameterizedTypeReference<>() { });
         assertThat(outdoorCranes).extracting(c -> c.get("craneId")).containsExactly("GC_01");
-        List<Map<String, Object>> indoorCranes = rest.get().uri("/api/cranes").retrieve()
+        List<Map<String, Object>> indoorCranes = rest.get().uri("/api/indoor/cranes").retrieve()
                 .body(new ParameterizedTypeReference<>() { });
         assertThat(indoorCranes).extracting(c -> c.get("craneId")).doesNotContain("GC_01");
-        assertThat(status(rest, "/api/cranes/GC_01").value()).isEqualTo(404);
+        assertThat(status(rest, "/api/indoor/cranes/GC_01").value()).isEqualTo(404);
         // 같은 키라 순서대로 처리된다. GC_01 뒤에 보낸 미배정 슬롯·공통 블록까지 처리되기를 기다린다.
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
             assertThat(outdoorIngestStats.ignored(IgnoreReason.UNASSIGNED)).isEqualTo(2);

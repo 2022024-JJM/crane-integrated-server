@@ -62,8 +62,8 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 - 패키지는 `domain / application / adapter / config`로 나뉘고 의존 방향은 `domain ← application ← adapter, config`다. 어댑터(`adapter.in.*`, `adapter.out.*`)끼리는 서로 의존하지 않는다. `ArchitectureTest`(ArchUnit)가 이를 검사하므로 위반하면 테스트가 실패한다.
 - `domain`과 `application`에는 Spring·JPA·Jackson 등 프레임워크 코드를 두지 않는다. 애플리케이션 서비스는 스테레오타입 어노테이션 없이 `config/ApplicationConfig`에서 `@Bean`으로 조립하고, 설정값(`CisProperties`)은 거기서만 풀어 생성자로 넘긴다.
 - 도메인 타입의 JSON 표현은 `config/DomainJacksonComponent`(`@JacksonComponent`)로 등록한다. REST·Redis·이력 JSON·STOMP가 모두 Boot의 `JsonMapper` 빈 하나를 쓴다.
-- 내업·외업은 `CraneScope`(스냅샷 JSON의 `scope`)로 나눈다. REST(`/api/cranes` ↔ `/api/outdoor/cranes`)와 STOMP(`/topic/cranes` ↔ `/topic/outdoor/cranes`)는 scope로 갈리고, 메모리 상태·Redis 키와 채널·이력 테이블은 함께 쓴다. 이력 조회는 두 경로 모두 크레인 ID로만 찾는다.
-- 외업 코드는 `Outdoor` 접두어로 이름 짓고(`OutdoorTagIngestionService`, `OutdoorCraneEventKafkaListener`), 이름과 주석에 데이터 출처 장비 이름을 쓰지 않는다. 기존 내업 코드는 접두어 없이 쓴다.
+- 내업·외업은 `CraneScope`(스냅샷 JSON의 `scope`)로 나눈다. REST(`/api/indoor/cranes` ↔ `/api/outdoor/cranes`)와 STOMP(`/topic/indoor/cranes` ↔ `/topic/outdoor/cranes`)는 scope로 갈리고, 메모리 상태·Redis 키와 채널·이력 테이블은 함께 쓴다. 이력 조회는 두 경로 모두 크레인 ID로만 찾는다.
+- 범위 하나만 다루는 코드·경로·설정은 이름에 범위를 붙인다: `Indoor`/`Outdoor` 접두어(`IndoorTagIngestionService` ↔ `OutdoorTagIngestionService`), 경로 `/indoor/`·`/outdoor/`, 설정 `cis.kafka.indoor.*`·`cis.kafka.outdoor.*`. 두 범위를 함께 다루는 공용 코드(`CraneStateRegistry`, `CraneSnapshot`, `RawTagEvent`, `CraneHistoryController` 등)는 접두어 없이 둔다. 이름과 주석에 데이터 출처 장비 이름을 쓰지 않는다.
 - 수신 카운터(`IngestStats`)는 scope마다 빈 하나다(`ApplicationConfig.INDOOR_INGEST_STATS`, `OUTDOOR_INGEST_STATS`). `cis.ingest.*`·`cis.kafka.*` 미터는 태그 `source=indoor|outdoor`로 나뉜다.
 - 어댑터가 공유해야 하는 이름(Redis 키·채널, Kafka 토픽)은 어댑터 상수가 아니라 `cis.*` 설정(`CisProperties`)에 둔다.
 
@@ -105,7 +105,7 @@ Spring Boot 4.1.1, Java 25(toolchain), Gradle 9.7.1(wrapper) 조합이다.
 - REST는 요청마다 남기지 않는다(access log 없음). `cis.web.slow-request-threshold` 이상 걸린 `/api/*` 요청만 `SlowRequestLogFilter`가 WARN으로 남긴다.
 - 같은 대상이 반복해서 실패하는 곳(외부 시스템 호출, 주기 작업)은 매번 찍지 않고 `application.support.FailureLog`로 시작·지속(1분마다)·복구만 남긴다. `FixedDelayScheduler`는 틱 실패를 이미 이렇게 남긴다.
 - 외부 라이브러리의 반복 WARN·ERROR는 `RepeatedLogFilter`가 1분에 한 번으로 줄인다. 대상은 `logback-spring.xml`의 `loggerPrefix`이고, 시끄러운 INFO는 `logging.level`로 끈다(`org.apache.kafka`는 WARN).
-- Kafka 수신 상태(브로커 연결·파티션 할당·메시지 유무)는 `IngestWatchScheduler`가 토픽(indoor·outdoor)별로 따로 판정해 남긴다. 리스너 id(`ingest`, `ingest-outdoor`)는 스레드 이름과 client.id에 쓰이고, `idIsGroup = false`라 내업 그룹은 `spring.kafka.consumer.group-id`, 외업 그룹은 그 뒤에 `-outdoor`를 붙인 이름이다(한쪽 리밸런스가 다른 쪽 수신을 멈추지 않게).
+- Kafka 수신 상태(브로커 연결·파티션 할당·메시지 유무)는 `IngestWatchScheduler`가 토픽(indoor·outdoor)별로 따로 판정해 남긴다. 리스너 id(`ingest-indoor`, `ingest-outdoor`)는 스레드 이름과 client.id에 쓰인다. 컨슈머 그룹은 `spring.kafka.consumer.group-id` 뒤에 `-indoor`·`-outdoor`를 붙여 범위마다 따로 둔다(한쪽 리밸런스가 다른 쪽 수신을 멈추지 않게).
 - 실시간 푸시 경로(Redis 발행 → 구독 → STOMP)는 `PushWatchScheduler`가 `cis.push.published`와 `cis.push.forwarded`를 비교해 판정한다(`!test` 프로필에서만 뜬다).
 - 테스트에서 로그를 검증할 때는 `support.LogCapture`를 쓴다.
 

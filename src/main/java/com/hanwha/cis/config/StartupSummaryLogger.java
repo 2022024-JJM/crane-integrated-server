@@ -24,11 +24,12 @@ public class StartupSummaryLogger {
 
     @EventListener(ApplicationReadyEvent.class)
     public void logTargets() {
-        log.info("Ready | kafka={} topic={} outdoor-topic={} group={} concurrency={} | db={} user={} | redis={}:{}"
-                        + " | logs={}",
-                env.getProperty("spring.kafka.bootstrap-servers"), properties.kafka().topic(),
-                properties.kafka().outdoorTopic(), env.getProperty("spring.kafka.consumer.group-id"),
-                properties.kafka().concurrency(),
+        String group = env.getProperty("spring.kafka.consumer.group-id");
+        CisProperties.Kafka kafka = properties.kafka();
+        log.info("Ready | kafka={} indoor={}(group={}-indoor, concurrency={}) outdoor={}(group={}-outdoor)"
+                        + " | db={} user={} | redis={}:{} | logs={}",
+                env.getProperty("spring.kafka.bootstrap-servers"), kafka.indoor().topic(), group,
+                kafka.indoor().concurrency(), kafka.outdoor().topic(), group,
                 withoutQuery(env.getProperty("spring.datasource.url")), env.getProperty("spring.datasource.username"),
                 env.getProperty("spring.data.redis.host"), env.getProperty("spring.data.redis.port"),
                 Path.of(env.getProperty("logging.file.path", "logs")).toAbsolutePath());

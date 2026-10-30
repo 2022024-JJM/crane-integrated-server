@@ -2,7 +2,7 @@ package com.hanwha.cis.adapter.in.kafka;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
+import com.hanwha.cis.application.port.in.RawTagEvent;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;

@@ -14,6 +14,7 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
     consumer:
+      # 기본 그룹 이름. 리스너가 범위를 붙여 쓴다(crane-integrated-server-indoor, -outdoor).
       group-id: crane-integrated-server
       auto-offset-reset: latest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -66,10 +67,12 @@ management:
 
 cis:
   kafka:
-    topic: ocean.crane.indoor.event
-    concurrency: 3
-    # 외업. 레코드 키가 PLC 장비 이름 하나라 파티션 하나에만 들어오므로 리스너 스레드는 1개다.
-    outdoor-topic: ocean.crane.outdoor.event
+    indoor:
+      topic: ocean.crane.indoor.event
+      concurrency: 3
+    # 외업은 레코드 키가 PLC 장비 이름 하나라 파티션 하나에만 들어오므로 리스너 스레드는 1개다.
+    outdoor:
+      topic: ocean.crane.outdoor.event
   push:
     interval: 250ms
   history:

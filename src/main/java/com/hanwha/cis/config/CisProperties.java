@@ -24,15 +24,24 @@ public record CisProperties(
         @Valid @NotNull @DefaultValue Redis redis,
         @Valid @NotNull @DefaultValue Web web) {
 
-    /**
-     * @param topic        내업(indoor) 토픽
-     * @param concurrency  내업 리스너 스레드 수
-     * @param outdoorTopic 외업(outdoor) 토픽. 레코드 키가 하나라 리스너 스레드는 1개로 고정이다
-     */
+    /** 범위별 토픽. 컨슈머 그룹은 spring.kafka.consumer.group-id 뒤에 -indoor / -outdoor를 붙인다. */
     public record Kafka(
-            @NotBlank @DefaultValue("ocean.crane.indoor.event") String topic,
-            @Min(1) @DefaultValue("3") int concurrency,
-            @NotBlank @DefaultValue("ocean.crane.outdoor.event") String outdoorTopic) {
+            @Valid @NotNull @DefaultValue Indoor indoor,
+            @Valid @NotNull @DefaultValue Outdoor outdoor) {
+
+        /**
+         * @param topic       내업 토픽
+         * @param concurrency 내업 리스너 스레드 수
+         */
+        public record Indoor(
+                @NotBlank @DefaultValue("ocean.crane.indoor.event") String topic,
+                @Min(1) @DefaultValue("3") int concurrency) {
+        }
+
+        /** @param topic 외업 토픽. 레코드 키가 하나라 리스너 스레드는 1개로 고정이다 */
+        public record Outdoor(
+                @NotBlank @DefaultValue("ocean.crane.outdoor.event") String topic) {
+        }
     }
 
     public record Push(

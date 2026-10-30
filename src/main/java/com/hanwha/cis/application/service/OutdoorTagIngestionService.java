@@ -1,7 +1,7 @@
 package com.hanwha.cis.application.service;
 
 import com.hanwha.cis.application.port.in.IngestOutdoorTagUseCase;
-import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
+import com.hanwha.cis.application.port.in.RawTagEvent;
 import com.hanwha.cis.application.service.IngestStats.IgnoreReason;
 import com.hanwha.cis.application.service.IngestStats.SkipReason;
 import com.hanwha.cis.domain.model.ApplyResult;
@@ -46,8 +46,7 @@ public class OutdoorTagIngestionService implements IngestOutdoorTagUseCase {
     private final CraneStateRegistry registry;
     private final IngestStats stats;
     private final Clock clock;
-    private final TagIngestionService.RateLimiter skipLogLimiter =
-            new TagIngestionService.RateLimiter(MAX_SKIP_LOGS_PER_MINUTE);
+    private final SkipLogLimiter skipLogLimiter = new SkipLogLimiter(MAX_SKIP_LOGS_PER_MINUTE);
     private final Map<SlotKey, Slot> slots = new HashMap<>();
     /** craneId → 그 크레인이 들어 있는 슬롯. 같은 Crane_ID가 두 슬롯에 오면 먼저 잡은 슬롯만 반영한다. */
     private final Map<String, SlotKey> owners = new HashMap<>();

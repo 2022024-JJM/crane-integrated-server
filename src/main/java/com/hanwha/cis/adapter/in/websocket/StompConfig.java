@@ -13,7 +13,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * STOMP over WebSocket. 엔드포인트 /ws(SockJS 없음), 심플 브로커 /topic.
- * 구독 직후 초기 상태는 REST GET /api/cranes 로 받는다.
+ * 구독 직후 초기 상태는 REST GET /api/indoor/cranes, /api/outdoor/cranes 로 받는다.
  */
 @Configuration
 @EnableWebSocketMessageBroker

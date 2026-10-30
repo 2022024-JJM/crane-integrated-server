@@ -55,6 +55,25 @@ podman images localhost/crane-integrated-server                 # 남아 있는 
 podman image rm localhost/crane-integrated-server:<지울 태그>     # 오래된 태그 정리
 ```
 
+### 내업 컨슈머 그룹 옮기기 (한 번)
+
+내업 리스너의 컨슈머 그룹은 `crane-integrated-server-indoor`입니다. 그룹이 `crane-integrated-server`였던 버전에서 처음 올릴 때는 새 그룹에 오프셋이 없어서, 그대로 올리면 `auto-offset-reset: latest`를 따라 서버가 내려가 있던 동안의 내업 메시지를 건너뜁니다(그만큼 이력이 빔). 서버를 내린 뒤 옛 그룹의 오프셋을 새 그룹에 옮기고 올립니다.
+
+```bash
+podman compose stop app
+podman exec <ISL Kafka 컨테이너> sh -c '
+  B=<브로커 주소>; T=ocean.crane.indoor.event
+  kafka-consumer-groups --bootstrap-server $B --describe --group crane-integrated-server 2>/dev/null \
+    | awk -v t=$T "\$2==t {print \$2\",\"\$3\",\"\$4}" > /tmp/indoor-offsets.csv
+  kafka-consumer-groups --bootstrap-server $B --group crane-integrated-server-indoor \
+    --reset-offsets --from-file /tmp/indoor-offsets.csv --execute'
+podman compose up -d app
+```
+
+- 로컬 ISL은 컨테이너 `isl-infra-kafka`, 브로커 주소 `localhost:9092`입니다. `kafka-consumer-groups`는 Confluent 이미지의 이름이고, Apache 이미지는 `/opt/kafka/bin/kafka-consumer-groups.sh`입니다.
+- `--execute` 결과에 파티션별 `NEW-OFFSET`이 찍히면 옮겨진 것입니다. 그 뒤 옛 그룹은 지워도 됩니다(`--delete --group crane-integrated-server`).
+- 이 단계를 빠뜨려도 서버는 정상 동작하고, 그 배포 동안의 내업 이력만 빕니다. 옛 그룹을 지운 뒤 그 이전 이미지로 롤백하면 마찬가지로 롤백 동안의 내업 이력이 빕니다.
+
 이 서버에서 빌드하지 않고 다른 곳에서 만든 이미지를 쓸 때는 이름을 그대로 옮깁니다.
 
 ```bash

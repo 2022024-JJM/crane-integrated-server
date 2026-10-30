@@ -1,6 +1,6 @@
 package com.hanwha.cis.application.service;
 
-import static com.hanwha.cis.support.Readings.reading;
+import static com.hanwha.cis.support.IndoorReadings.reading;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 

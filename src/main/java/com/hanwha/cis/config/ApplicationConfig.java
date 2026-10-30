@@ -8,10 +8,10 @@ import com.hanwha.cis.application.service.CraneHistoryQueryService;
 import com.hanwha.cis.application.service.CraneStateQueryService;
 import com.hanwha.cis.application.service.CraneStateRegistry;
 import com.hanwha.cis.application.service.HistoryRecordingService;
+import com.hanwha.cis.application.service.IndoorTagIngestionService;
 import com.hanwha.cis.application.service.IngestStats;
 import com.hanwha.cis.application.service.OutdoorTagIngestionService;
 import com.hanwha.cis.application.service.SnapshotPushService;
-import com.hanwha.cis.application.service.TagIngestionService;
 import com.hanwha.cis.domain.model.CraneScope;
 import java.time.Clock;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -49,9 +49,9 @@ public class ApplicationConfig {
     }
 
     @Bean
-    TagIngestionService tagIngestionService(CraneStateRegistry registry,
+    IndoorTagIngestionService indoorTagIngestionService(CraneStateRegistry registry,
             @Qualifier(INDOOR_INGEST_STATS) IngestStats stats, Clock clock) {
-        return new TagIngestionService(registry, stats, clock);
+        return new IndoorTagIngestionService(registry, stats, clock);
     }
 
     @Bean

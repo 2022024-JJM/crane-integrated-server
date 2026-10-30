@@ -2,7 +2,7 @@ package com.hanwha.cis.application.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.hanwha.cis.application.port.in.IngestTagReadingUseCase.RawTagEvent;
+import com.hanwha.cis.application.port.in.RawTagEvent;
 import com.hanwha.cis.application.service.IngestStats.IgnoreReason;
 import com.hanwha.cis.application.service.IngestStats.SkipReason;
 import com.hanwha.cis.domain.model.CraneScope;

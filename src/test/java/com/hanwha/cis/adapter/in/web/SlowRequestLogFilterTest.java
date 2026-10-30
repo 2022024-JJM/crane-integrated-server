@@ -31,7 +31,7 @@ class SlowRequestLogFilterTest {
 
         filter.doFilter(historyRequest(), new MockHttpServletResponse(), respondAfter(Duration.ofMillis(2345), 503));
 
-        assertThat(logs.lines()).containsExactly("WARN Slow request: GET /api/cranes/C_867/history"
+        assertThat(logs.lines()).containsExactly("WARN Slow request: GET /api/indoor/cranes/C_867/history"
                 + "?from=2026-10-19T05:00:00Z&to=2026-10-19T06:00:00Z&step=1s -> 503 in 2345 ms (remote 10.0.0.5)");
     }
 
@@ -50,7 +50,7 @@ class SlowRequestLogFilterTest {
     }
 
     private static MockHttpServletRequest historyRequest() {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/cranes/C_867/history");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/indoor/cranes/C_867/history");
         request.setQueryString("from=2026-10-19T05:00:00Z&to=2026-10-19T06:00:00Z&step=1s");
         request.setRemoteAddr("10.0.0.5");
         return request;

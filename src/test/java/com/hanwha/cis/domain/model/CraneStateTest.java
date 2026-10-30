@@ -14,7 +14,7 @@ class CraneStateTest {
     private static final Duration STALE = Duration.ofSeconds(30);
 
     private static TagReading reading(String tag, Object value, Instant at) {
-        return new TagReading(CraneScope.INDOOR, "isl-ocean-crane", TagKey.parse("F5_1_Bay.C_867." + tag),
+        return new TagReading(CraneScope.INDOOR, "isl-ocean-crane", TagKey.parseIndoor("F5_1_Bay.C_867." + tag),
                 TagValue.of(value), 0, at);
     }
 
@@ -54,7 +54,7 @@ class CraneStateTest {
         state.apply(reading("height", 10, T0), T0);
 
         TagReading worseQuality = new TagReading(CraneScope.INDOOR, "isl-ocean-crane",
-                TagKey.parse("F5_1_Bay.C_867.height"), TagValue.of(10), 4, T0.plusMillis(100));
+                TagKey.parseIndoor("F5_1_Bay.C_867.height"), TagValue.of(10), 4, T0.plusMillis(100));
         assertThat(state.apply(worseQuality, T0.plusMillis(100))).isEqualTo(ApplyResult.UNCHANGED);
         assertThat(state.snapshot(T0, STALE).tags().get("height").quality()).isEqualTo(4);
     }

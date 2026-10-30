@@ -33,8 +33,8 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import org.springframework.transaction.CannotCreateTransactionException;
 
-@WebMvcTest({CraneController.class, OutdoorCraneController.class, CraneHistoryController.class})
-class CraneControllerTest {
+@WebMvcTest({IndoorCraneController.class, OutdoorCraneController.class, CraneHistoryController.class})
+class CraneControllersTest {
 
     private static final Instant T0 = Instant.parse("2026-10-19T05:23:16.993Z");
 
@@ -64,7 +64,7 @@ class CraneControllerTest {
     void listsCranesAsJson() {
         given(stateQuery.list(CraneScope.INDOOR)).willReturn(List.of(snapshot()));
 
-        MvcTestResult result = mvc.get().uri("/api/cranes").exchange();
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes").exchange();
 
         assertThat(result).hasStatusOk().hasContentTypeCompatibleWith(MediaType.APPLICATION_JSON);
         assertThat(result).bodyJson().extractingPath("$[0].craneId").isEqualTo("C_867");
@@ -81,7 +81,7 @@ class CraneControllerTest {
     void returnsSingleCrane() {
         given(stateQuery.get(CraneScope.INDOOR, "C_867")).willReturn(snapshot());
 
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867").exchange();
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867").exchange();
 
         assertThat(result).hasStatusOk();
         assertThat(result).bodyJson().extractingPath("$.bay").isEqualTo("F5_1_Bay");
@@ -91,7 +91,7 @@ class CraneControllerTest {
     void unknownCraneIsProblemDetail404() {
         given(stateQuery.get(CraneScope.INDOOR, "C_999")).willThrow(new CraneNotFoundException("C_999"));
 
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_999").exchange();
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_999").exchange();
 
         assertThat(result).hasStatus(404).hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON);
         assertThat(result).bodyJson().extractingPath("$.status").isEqualTo(404);
@@ -101,11 +101,17 @@ class CraneControllerTest {
     }
 
     @Test
+    void pathsWithoutScopeAreGone() {
+        assertThat(mvc.get().uri("/api/cranes").exchange()).hasStatus(404);
+        assertThat(mvc.get().uri("/api/cranes/C_867").exchange()).hasStatus(404);
+    }
+
+    @Test
     void invalidQueryIsProblemDetail400() {
         given(historyQuery.frames(eq("C_867"), any(), any(), any()))
                 .willThrow(new InvalidQueryException("range must not exceed PT1H"));
 
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/history")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/history")
                 .param("from", "2026-10-19T05:00:00Z")
                 .param("to", "2026-10-19T07:00:00Z")
                 .exchange();
@@ -126,14 +132,14 @@ class CraneControllerTest {
 
         try (LogCapture logs = LogCapture.of(CraneHistoryController.class)) {
             for (int i = 0; i < 2; i++) {
-                MvcTestResult result = mvc.get().uri("/api/cranes/C_867/changes")
+                MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/changes")
                         .param("from", from.toString()).param("to", to.toString())
                         .exchange();
 
                 assertThat(result).hasStatus(503).hasContentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON);
                 assertThat(result).bodyJson().extractingPath("$.title").isEqualTo("History unavailable");
             }
-            MvcTestResult recovered = mvc.get().uri("/api/cranes/C_867/changes")
+            MvcTestResult recovered = mvc.get().uri("/api/indoor/cranes/C_867/changes")
                     .param("from", from.toString()).param("to", to.toString())
                     .exchange();
 
@@ -148,7 +154,7 @@ class CraneControllerTest {
 
     @Test
     void missingRequiredParameterIsProblemDetail400() {
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/history")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/history")
                 .param("from", "2026-10-19T05:00:00Z")
                 .exchange();
 
@@ -158,7 +164,7 @@ class CraneControllerTest {
 
     @Test
     void unparseableInstantIsProblemDetail400() {
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/history")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/history")
                 .param("from", "yesterday").param("to", "now")
                 .exchange();
 
@@ -167,7 +173,7 @@ class CraneControllerTest {
 
     @Test
     void invalidStepIsProblemDetail400() {
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/history")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/history")
                 .param("from", "2026-10-19T05:00:00Z")
                 .param("to", "2026-10-19T05:10:00Z")
                 .param("step", "soon")
@@ -188,7 +194,7 @@ class CraneControllerTest {
                 List.of(new Frame(from, values), new Frame(from.plusSeconds(5), values), new Frame(to, values)),
                 false));
 
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/history")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/history")
                 .param("from", from.toString()).param("to", to.toString()).param("step", "5s")
                 .exchange();
 
@@ -208,7 +214,7 @@ class CraneControllerTest {
         given(historyQuery.frames(eq("C_867"), eq(from), eq(to), isNull())).willReturn(new HistoryFrames(
                 "C_867", from, to, Duration.ofSeconds(1), List.of(), null, List.of(), false));
 
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/history")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/history")
                 .param("from", from.toString()).param("to", to.toString())
                 .exchange();
 
@@ -260,7 +266,7 @@ class CraneControllerTest {
                         new Change(after.plusSeconds(2), false, Map.of())),
                 after.plusSeconds(2)));
 
-        MvcTestResult result = mvc.get().uri("/api/cranes/C_867/changes")
+        MvcTestResult result = mvc.get().uri("/api/indoor/cranes/C_867/changes")
                 .param("from", from.toString()).param("to", to.toString())
                 .param("after", after.toString()).param("limit", "2")
                 .exchange();

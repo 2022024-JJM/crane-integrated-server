@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
 public class KafkaListenerMetrics implements MeterBinder {
 
     private static final Map<CraneScope, String> LISTENERS = Map.of(
-            CraneScope.INDOOR, CraneEventKafkaListener.LISTENER_ID,
+            CraneScope.INDOOR, IndoorCraneEventKafkaListener.LISTENER_ID,
             CraneScope.OUTDOOR, OutdoorCraneEventKafkaListener.LISTENER_ID);
 
     private final KafkaListenerEndpointRegistry registry;

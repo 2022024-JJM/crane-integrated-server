@@ -13,13 +13,13 @@ import org.springframework.stereotype.Component;
 
 /**
  * 스냅샷 묶음을 scope별 STOMP 토픽으로 보낸다. 묶음 토픽에 1건, 그 아래 /{craneId} 에 크레인별 1건.
- * indoor는 /topic/cranes, outdoor는 /topic/outdoor/cranes. 한 묶음에 두 scope가 섞여 오면 나눠 보낸다.
+ * indoor는 /topic/indoor/cranes, outdoor는 /topic/outdoor/cranes. 한 묶음에 두 scope가 섞여 오면 나눠 보낸다.
  * 운영에서는 Redis 구독 스레드가, 테스트에서는 publisher 대체 구현이 호출한다.
  */
 @Component
 public class SnapshotStompBroadcaster {
 
-    public static final String TOPIC_ALL = "/topic/cranes";
+    public static final String INDOOR_TOPIC_ALL = "/topic/indoor/cranes";
     public static final String OUTDOOR_TOPIC_ALL = "/topic/outdoor/cranes";
 
     /** 묶음 토픽 메시지 형식. */
@@ -54,7 +54,7 @@ public class SnapshotStompBroadcaster {
 
     static String topic(CraneScope scope) {
         return switch (scope) {
-            case INDOOR -> TOPIC_ALL;
+            case INDOOR -> INDOOR_TOPIC_ALL;
             case OUTDOOR -> OUTDOOR_TOPIC_ALL;
         };
     }
